@@ -63,7 +63,7 @@ class Renderer {
 
     canvas.onMouseMove.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.client);
+        Matrix4 rotation = dragRotation(_startDrag, e.client, planeDistance);
         for (int i = 0; i < rotationPower; i++) {
           _rotation = _rotation.multiply(rotation);
         }
@@ -75,7 +75,7 @@ class Renderer {
 
     canvas.onMouseUp.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.client);
+        Matrix4 rotation = dragRotation(_startDrag, e.client, planeDistance);
         for (int i = 0; i < rotationPower; i++) {
           _rotation = _rotation.multiply(rotation);
         }
@@ -86,7 +86,7 @@ class Renderer {
     });
     canvas.onMouseOut.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.client);
+        Matrix4 rotation = dragRotation(_startDrag, e.client, planeDistance);
         for (int i = 0; i < rotationPower; i++) {
           _rotation = _rotation.multiply(rotation);
         }
@@ -136,7 +136,7 @@ class Renderer {
     varying vec3 fColor;
     void main(void) {
         float attenuation = 0.0;
-        attenuation += max(0.0, dot(fNormal, normalize(fPosition))); 
+        attenuation += max(0.0, dot(fNormal, -normalize(fPosition))); 
         gl_FragColor = vec4(fColor * attenuation,1.0);
     }
     """;
@@ -176,6 +176,7 @@ class Renderer {
     }
 
     _vertexBuffer = _gl.createBuffer();
+    _indexBuffer = _gl.createBuffer();
 
     _aVertexPosition = _gl.getAttribLocation(_shaderProgram, "vPosition");
     _gl.enableVertexAttribArray(_aVertexPosition);
@@ -211,9 +212,20 @@ class Renderer {
   static final int normalOffset = dimensions * 4;
 
   webgl.Buffer _vertexBuffer;
+  webgl.Buffer _indexBuffer;
+  
+  void _addVertex(List<double> buffer, Vector3 p, Vector3 n) {
+    List<double> tmp = new List<double>(4);
+    p.copyIntoArray(tmp);
+    tmp[3] = 1.0;
+    buffer.addAll(tmp);
+    n.copyIntoArray(tmp);
+    buffer.addAll(tmp);
+  }
+
   void _addTriangle(List<double> buffer, List<Vector3> a) {
     Vector3 normal;
-    normal = (a[1] - a[0]).cross(a[2] - a[0]).normalize();
+    normal = (a[2] - a[0]).cross(a[1] - a[0]).normalize();
     for (int i = 0; i < 3; i++) {
       List<double> tmp = new List<double>(4);
       a[i].copyIntoArray(tmp);
@@ -223,9 +235,55 @@ class Renderer {
       buffer.addAll(tmp);
     }
   }
+  int _vertexCount;
   void _setupModel() {
     List<double> buffer = new List<double>();
 
+    /*List vertexes = [
+      [[0.0, 1.0, 1.0], [0.0, 0.0, -1.0]],
+      [[1.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+      [[1.0, 1.0, 1.0], [0.0, 0.0, -1.0]],
+      
+      [[1.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+      [[0.0, 1.0, 1.0], [0.0, 0.0, -1.0]],
+      [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]]
+    ];*/
+    
+    List vertexes = [
+      //
+      [[0.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+      [[0.0, 1.0, 1.0], [0.0, 0.0, -1.0]],
+      [[1.0, 0.0, 1.0], [0.0, 0.0, -1.0]],
+      [[1.0, 1.0, 1.0], [0.0, 0.0, -1.0]],
+      //
+      [[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+      [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+      [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+      [[1.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+
+    ];
+    
+    List<int> indexData = [
+      //
+      1,2,3,
+      //
+      2,1,0,
+      //
+      7,6,5,
+      //
+      4,5,6
+      ];
+    
+    _vertexCount = indexData.length;
+
+    for (int i = 0; i < vertexes.length; i++) {
+      buffer.addAll(vertexes[i][0]);
+      buffer.add(1.0);
+      buffer.addAll(vertexes[i][1]);
+      buffer.add(0.0);
+    }
+
+    /*
     // Front face.
     _addTriangle(buffer, [
       new Vector3(0.0, 1.0, 1.0),
@@ -292,6 +350,7 @@ class Renderer {
       new Vector3(1.0, 1.0, 0.0),
       new Vector3(0.0, 1.0, 0.0)
     ]);
+*/
 
     _gl.bindBuffer(webgl.RenderingContext.ARRAY_BUFFER, _vertexBuffer);
     _gl.vertexAttribPointer(_aVertexPosition, 3, webgl.RenderingContext.FLOAT,
@@ -301,6 +360,13 @@ class Renderer {
 
     _gl.bufferDataTyped(webgl.RenderingContext.ARRAY_BUFFER,
         new Float32List.fromList(buffer), webgl.RenderingContext.STATIC_DRAW);
+
+    
+    _gl.bindBuffer(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _indexBuffer);
+
+    _gl.bufferDataTyped(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, 
+        new Int16List.fromList(indexData), webgl.RenderingContext.STATIC_DRAW);
+   
   }
 
   int _viewportWidth;
@@ -310,9 +376,9 @@ class Renderer {
 
   void _render() {
     _gl.viewport(0, 0, _viewportWidth, _viewportHeight);
-    _gl.clearColor(0, 0, 0, 1);
-    _gl.enable(webgl.RenderingContext.CULL_FACE);
-    _gl.cullFace(webgl.RenderingContext.BACK);
+    _gl.clearColor(0, 0, 1, 1);
+    //_gl.enable(webgl.RenderingContext.CULL_FACE);
+    //_gl.cullFace(webgl.RenderingContext.BACK);
     _gl.clear(webgl.RenderingContext.COLOR_BUFFER_BIT |
         webgl.RenderingContext.DEPTH_BUFFER_BIT);
 
@@ -321,6 +387,9 @@ class Renderer {
         false, stride, positionOffset);
     _gl.vertexAttribPointer(_aVertexNormal, 3, webgl.RenderingContext.FLOAT,
         false, stride, normalOffset);
+    
+    _gl.bindBuffer(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _indexBuffer);
+        
 
     // field of view is 90°, width-to-height ratio, hide things closer than 0.1 or further than 100
     _pMatrix = makePerspectiveMatrix(
@@ -334,7 +403,11 @@ class Renderer {
 
     _setMatrixUniforms();
 
-    _gl.drawArrays(webgl.RenderingContext.TRIANGLES, 0, 6 * 6);
+    //_gl.drawArrays(webgl.RenderingContext.TRIANGLES, 0, 6 * 6);
+    //_gl.drawArrays(webgl.RenderingContext.TRIANGLES, 0, _vertexCount);
+    
+    //_gl.drawElements(webgl.RenderingContext.TRIANGLES, _vertexCount, webgl.RenderingContext.UNSIGNED_SHORT, 0);
+    _gl.drawElements(webgl.RenderingContext.QUADS, _vertexCount, webgl.RenderingContext.UNSIGNED_SHORT, 0);
   }
 
   void _gameloop(Timer timer) {
