@@ -58,14 +58,20 @@ class Multivector {
   }
 
   static int _bitCount(int a) {
-    int c = a;
+    /*int c = a;
     c = (c & 0x5555555555555555) + ((c >> 1) & 0x5555555555555555);
     c = (c & 0x3333333333333333) + ((c >> 2) & 0x3333333333333333);
     c = (c & 0x0f0f0f0f0f0f0f0f) + ((c >> 4) & 0x0f0f0f0f0f0f0f0f);
     c = (c & 0x00ff00ff00ff00ff) + ((c >> 8) & 0x00ff00ff00ff00ff);
     c = (c & 0x0000ffff0000ffff) + ((c >> 16) & 0x0000ffff0000ffff);
-    c = (c & 0x00000000ffffffff) + ((c >> 32) & 0x00000000ffffffff);
-    return c;
+    c = (c & 0x00000000ffffffff) + ((c >> 32) & 0x00000000ffffffff);*/
+    int s = 0;
+    int c = a;
+    while (c != 0) {
+      s += c & 1;
+      c >>= 1;
+    }
+    return s;
   }
   static bool _reorderingSign(int a, int b) {
     a = a >> 1;
@@ -200,6 +206,7 @@ class Multivector {
         out += _elements[i].toString() + (i != 0 ? "*" : "") + basis_vector;
       }
     }
+    out += out == "" ? "0" : "";
     return out;
   }
 }
@@ -277,7 +284,9 @@ class Renderer {
   }
   void doDrag(Point next, bool endDrag, [double planeDistance = 1.0]) {
     Multivector rotation = dragRotation(_startDrag, next, planeDistance);
+
     _rotation = rotation.versorPower(_rotationPower) * _rotation;
+
     _rotationPower *= ROTATION_POWER;
 
     if (endDrag) {
@@ -289,8 +298,8 @@ class Renderer {
   }
 
   Renderer(CanvasElement canvas) {
-    _keyframes = new List<Multivector>(3);
-    for (int i = 0; i < 3; i++) {
+    _keyframes = new List<Multivector>(4);
+    for (int i = 0; i < _keyframes.length; i++) {
       _keyframes[i] = new Multivector.one();
     }
 
@@ -548,9 +557,6 @@ class Renderer {
     _pMatrix = makePerspectiveMatrix(
         radians(90.0), _viewportWidth / _viewportHeight, 0.1, FAR_DISTANCE);
 
-    //_mvMatrix = new Matrix4.identity();
-    //_mvMatrix.translate(0.0, 0.0, -1.5);
-    //_mvMatrix.multiplyTranspose(_rotation);
     Matrix4 model = new Matrix4.translation(-_center);
     Matrix4 rot = fromVersor(_rotation);
 
@@ -570,18 +576,29 @@ class Renderer {
         webgl.RenderingContext.UNSIGNED_SHORT, 0);
   }
 
+  static int _binomialCoefficient(int n, int k) {
+    int out = 1;
+    for (int j = 1; j <= k; j++) {
+      out *= n - k + j;
+      out ~/= j;
+    }
+    return out;
+  }
+
   void _gameloop(Timer timer) {
     if (_animationProgress != null) {
       if (_animationProgress < ANIMATION_LENGTH) {
+        List<double> coefficients =
+            new List<double>.filled(_keyframes.length, 0.0);
         double t = _animationProgress / ANIMATION_LENGTH;
-        List<double> coefficients = new List<double>.filled(3, 0.0);
-        coefficients[0] = (1.0 - t) * (1.0 - t);
-        coefficients[1] = 2.0 * (1.0 - t) * t;
-        coefficients[2] = t * t;
 
         Multivector l = new Multivector.zero();
-        for (int i = 0; i < 3; i++) {
-          l += _keyframes[i].versorLog().scale(coefficients[i]);
+        double power = pow(1.0 - t, _keyframes.length - 1.0);
+        for (int i = 0; i < _keyframes.length; i++) {
+          double coefficient =
+              power * _binomialCoefficient(_keyframes.length - 1, i);
+          power *= t / (1.0 - t);
+          l += _keyframes[i].versorLog().scale(coefficient);
         }
         _rotation = l.versorExp();
 
@@ -620,6 +637,9 @@ void main() {
   querySelector('#saveKeyframe3').onClick.listen((MouseEvent e) {
     renderer.saveKeyframe(2);
   });
+  querySelector('#saveKeyframe4').onClick.listen((MouseEvent e) {
+    renderer.saveKeyframe(3);
+  });
   querySelector('#loadKeyframe1').onClick.listen((MouseEvent e) {
     renderer.loadKeyframe(0);
   });
@@ -629,8 +649,11 @@ void main() {
   querySelector('#loadKeyframe3').onClick.listen((MouseEvent e) {
     renderer.loadKeyframe(2);
   });
+  querySelector('#loadKeyframe4').onClick.listen((MouseEvent e) {
+    renderer.loadKeyframe(3);
+  });
   querySelector('#resetKeyframes').onClick.listen((MouseEvent e) {
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
       renderer.resetKeyframe(i);
     }
   });
