@@ -755,11 +755,14 @@ void main() {
 
       renderer.resetKeyframe(index);
     });
-  }
 
-  querySelector('#resetKeyframes').onClick.listen((MouseEvent e) {
-    renderer.resetKeyframes();
-  });
+    querySelector('#resetKeyframes').onClick.listen((MouseEvent e) {
+      renderer.resetKeyframes();
+      for (OptionElement option in keyframeSelect.options) {
+        option.remove();
+      }
+    });
+  }
 
   {
     SelectElement methodSelect =
