@@ -178,7 +178,8 @@ class Multivector {
     }
     double s = atan2(c2norm, _elements[0]) / c2norm;
 
-    return c.scale(s);
+    c = c.scale(s);
+    return c;
   }
   Multivector versorPower(double b) {
     Multivector alog = this.versorLog();
@@ -236,22 +237,30 @@ class Renderer {
   List<Multivector> _keyframes;
 
   void resetKeyframes() {
+    pauseAnimation();
     _keyframes = new List<Multivector>();
+    reset();
   }
-  void appendKeyframe() {
-    _keyframes.add(new Multivector.copy(_rotation));
+  void appendKeyframe(int i) {
+    pauseAnimation();
+    _keyframes.insert(i + 1, new Multivector.copy(_rotation));
   }
   void resetKeyframe(int i) {
+    pauseAnimation();
     _keyframes[i] = new Multivector.one();
+    reset();
   }
   void saveKeyframe(int i) {
+    pauseAnimation();
     _keyframes[i] = new Multivector.copy(_rotation);
   }
   void loadKeyframe(int i) {
+    pauseAnimation();
     _rotation = new Multivector.copy(_keyframes[i]);
-    _needUpdate = true;
+    update();
   }
   void removeKeyframe(int i) {
+    pauseAnimation();
     for (int j = i + 1; j < _keyframes.length; j++) {
       _keyframes[j - 1] = _keyframes[j];
     }
@@ -264,15 +273,16 @@ class Renderer {
   Multivector makeRotation(Vector3 a, Vector3 b) {
     Vector3 bn = b.normalized();
     Vector3 an = a.normalized();
-    //Vector3 cn = (an + bn).normalized();
+    Vector3 cn = (an + bn).normalized();
 
     Multivector aq = new Multivector(an);
-    Multivector bq = new Multivector(bn);
-    //Multivector cq = new Multivector(cn);
+    //Multivector bq = new Multivector(bn);
+    Multivector cq = new Multivector(cn);
 
-    Multivector out =
-        (aq * bq).addScalar(0.0).scale(sqrt(2.0 + 2.0 * an.dot(bn)));
-
+    /*Multivector out =
+        (aq * bq).addScalar(1.0).scale(sqrt(2.0 + 2.0 * an.dot(bn)));*/
+    //Multivector out = cq / aq;
+    Multivector out = (cq.inverse() / aq.inverse()).inverse();
     return out;
   }
   Multivector dragRotation(Point start, Point end,
@@ -689,10 +699,20 @@ class Renderer {
     _animationLength = ANIMATION_INTERVAL_LENGTH * (_keyframes.length - 1);
     _animationProgress = 0.0;
   }
+  void pauseAnimation() {
+    _animationProgress = null;
+  }
   Timer startTimer() {
     const duration = const Duration(milliseconds: 1000 ~/ TICS_PER_SECOND);
 
     return new Timer.periodic(duration, _gameloop);
+  }
+  void update() {
+    _needUpdate = true;
+  }
+  void reset() {
+    _rotation = new Multivector.one();
+    update();
   }
 }
 
@@ -704,32 +724,51 @@ void main() {
 
     querySelector('#addKeyframe').onClick.listen((MouseEvent e) {
       OptionElement option = new OptionElement();
-      option.text = (keyframeSelect.length + 1).toString();
-      option.value = keyframeSelect.length.toString();
-      keyframeSelect.append(option);
-      keyframeSelect.selectedIndex = keyframeSelect.options.length - 1;
 
-      renderer.appendKeyframe();
+      int index;
+      if (keyframeSelect.options.length > 0) {
+        index = keyframeSelect.selectedIndex + 1;
+        if (index < keyframeSelect.options.length) {
+          keyframeSelect.insertBefore(option, keyframeSelect.options[index]);
+        } else {
+          keyframeSelect.append(option);
+        }
+      } else {
+        index = 0;
+        keyframeSelect.append(option);
+      }
+      option.text = (index + 1).toString();
+      option.value = index.toString();
+
+      for (int i = index + 1; i < keyframeSelect.length; i++) {
+        keyframeSelect.options[i].text = (i + 1).toString();
+        keyframeSelect.options[i].value = i.toString();
+      }
+
+      renderer.appendKeyframe(index - 1);
+      keyframeSelect.selectedIndex = index;
     });
 
     querySelector('#removeKeyframe').onClick.listen((MouseEvent e) {
-      OptionElement option =
-          keyframeSelect.options[keyframeSelect.selectedIndex];
-      int index = int.parse(option.value);
-      option.remove();
-      for (int i = 0; i < keyframeSelect.options.length; i++) {
-        OptionElement optioni = keyframeSelect.options[i];
-        if (int.parse(optioni.value) > index) {
-          optioni.value = (int.parse(optioni.value) - 1).toString();
-          optioni.text = (int.parse(optioni.text) - 1).toString();
+      if (keyframeSelect.options.length > 0) {
+        OptionElement option =
+            keyframeSelect.options[keyframeSelect.selectedIndex];
+        int index = int.parse(option.value);
+        option.remove();
+        for (int i = 0; i < keyframeSelect.options.length; i++) {
+          OptionElement optioni = keyframeSelect.options[i];
+          if (int.parse(optioni.value) > index) {
+            optioni.value = (int.parse(optioni.value) - 1).toString();
+            optioni.text = (int.parse(optioni.text) - 1).toString();
+          }
         }
+        if (index < keyframeSelect.length) {
+          keyframeSelect.selectedIndex = index;
+        } else {
+          keyframeSelect.selectedIndex = keyframeSelect.length - 1;
+        }
+        renderer.removeKeyframe(index);
       }
-      if (index < keyframeSelect.length) {
-        keyframeSelect.selectedIndex = index;
-      } else {
-        keyframeSelect.selectedIndex = keyframeSelect.length - 1;
-      }
-      renderer.removeKeyframe(index);
     });
 
     querySelector('#saveKeyframe').onClick.listen((MouseEvent e) {
@@ -749,11 +788,15 @@ void main() {
     });
 
     querySelector('#revertKeyframe').onClick.listen((MouseEvent e) {
-      OptionElement option =
-          keyframeSelect.options[keyframeSelect.selectedIndex];
-      int index = int.parse(option.value);
+      if (keyframeSelect.options.length > 0) {
+        OptionElement option =
+            keyframeSelect.options[keyframeSelect.selectedIndex];
+        int index = int.parse(option.value);
 
-      renderer.resetKeyframe(index);
+        renderer.resetKeyframe(index);
+      } else {
+        renderer.reset();
+      }
     });
 
     querySelector('#resetKeyframes').onClick.listen((MouseEvent e) {
@@ -776,6 +819,9 @@ void main() {
 
   querySelector('#animateButton').onClick.listen((MouseEvent e) {
     renderer.startAnimation();
+  });
+  querySelector('#pauseButton').onClick.listen((MouseEvent e) {
+    renderer.pauseAnimation();
   });
 
   renderer.startTimer();
