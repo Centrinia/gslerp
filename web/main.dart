@@ -10,12 +10,19 @@ import 'dart:convert';
 import 'dart:math';
 
 class Multivector {
-  static const DIMENSION = 1 << 3;
+  static const VECTOR_DIMENSION = 3;
+  static const DIMENSION = 1 << VECTOR_DIMENSION;
   List<double> _elements;
   Multivector.zero() {
     _elements = new List<double>(DIMENSION);
     for (int i = 0; i < DIMENSION; i++) {
       _elements[i] = 0.0;
+    }
+  }
+  Multivector.copy(Multivector b) {
+    _elements = new List<double>(DIMENSION);
+    for (int i = 0; i < DIMENSION; i++) {
+      _elements[i] = b._elements[i];
     }
   }
   Multivector.one() {
@@ -43,8 +50,11 @@ class Multivector {
     _elements[1 << 2] = v.z;
   }
 
+  double get scalar {
+    return _elements[0];
+  }
   Vector3 get vector {
-    return new Vector3(_elements[1<<0], _elements[1<<1], _elements[1<<2]);
+    return new Vector3(_elements[1 << 0], _elements[1 << 1], _elements[1 << 2]);
   }
 
   static int _bitCount(int a) {
@@ -61,7 +71,7 @@ class Multivector {
     a = a >> 1;
     int sum = 0;
     while (a != 0) {
-      sum = sum + Multivector._bitCount(a & b);
+      sum += Multivector._bitCount(a & b);
       a = a >> 1;
     }
     return sum & 1 == 1;
@@ -82,7 +92,7 @@ class Multivector {
     }
     return c;
   }
-  
+
   Multivector inverse() {
     Multivector c = new Multivector.zero();
     double normsq = normSquare();
@@ -101,6 +111,20 @@ class Multivector {
     return c;
   }
 
+  Multivector scale(double b) {
+    Multivector c = new Multivector.zero();
+
+    for (int i = 0; i < DIMENSION; i++) {
+      c._elements[i] = _elements[i] * b;
+    }
+    return c;
+  }
+  Multivector addScalar(double b) {
+    Multivector c = new Multivector.copy(this);
+    c._elements[0] += b;
+    return c;
+  }
+  /* The geometric product. */
   operator *(Multivector b) {
     Multivector c = new Multivector.zero();
 
@@ -114,6 +138,69 @@ class Multivector {
   }
   operator /(Multivector b) {
     return this * b.inverse();
+  }
+
+  /* Take e to the power of a blade. */
+  Multivector versorExp() {
+    Multivector xsq = this * this;
+    double alphasq = xsq.scalar;
+    if (alphasq < 0) {
+      double alpha = sqrt(-alphasq);
+      return this.scale(sin(alpha) / alpha).addScalar(cos(alpha));
+    } else /*if (alphasq == 0)*/ {
+      return this.addScalar(1.0);
+    } /* else {
+      double alpha = sqrt(alphasq);
+      return x.scale(sinh(alpha) / alpha).addScalar(cosh(alpha));
+    }*/
+  }
+  Multivector versorLog() {
+    Multivector c = new Multivector.copy(this);
+    double c2sq = 0.0;
+    for (int i = 0; i < DIMENSION; i++) {
+      if (Multivector._bitCount(i) != 2) {
+        c._elements[i] = 0.0;
+      } else {
+        c2sq += c._elements[i] * c._elements[i];
+      }
+    }
+    double c2norm = sqrt(c2sq);
+    double c0norm = _elements[0] > 0 ? _elements[0] : -_elements[0];
+
+    if (c2norm <= 0.0) {
+      c = new Multivector.zero();
+      if (this.scalar < 0) {
+        /* We are asked to compute log(-1). Return a 360 degree rotation in an arbitrary plane. */
+
+        c._elements[(1 << 0) + (1 << 1)] = PI;
+      }
+      return c;
+    }
+    double s = atan2(c2norm, c0norm) / c2norm;
+
+    return c.scale(s);
+  }
+  Multivector versorPower(double b) {
+    Multivector alog = this.versorLog();
+    return alog.scale(b).versorExp();
+  }
+
+  String toString() {
+    String out = "";
+    for (int i = 0; i < DIMENSION; i++) {
+      if (_elements[i] != 0) {
+        String basis_vector = "";
+        for (int j = 0; j < VECTOR_DIMENSION; j++) {
+          if (((i >> j) & 1) != 0) {
+            basis_vector += basis_vector != "" ? "^" : "";
+            basis_vector += "e_" + (j + 1).toString();
+          }
+        }
+        out += out != "" ? " + " : "";
+        out += _elements[i].toString() + (i != 0 ? "*" : "") + basis_vector;
+      }
+    }
+    return out;
   }
 }
 
@@ -142,52 +229,34 @@ class Renderer {
   double _scale;
   Point _startDrag;
   Multivector _rotation;
-  static const ROTATION_POWER = 3;
+  double _rotationPower;
+  static const ROTATION_POWER_START = 3.0;
+  static const ROTATION_POWER = 1.002;
+  List<Multivector> _keyframes;
+
+  void resetKeyframe(int i) {
+    _keyframes[i] = new Multivector.one();
+  }
+  void saveKeyframe(int i) {
+    _keyframes[i] = new Multivector.copy(_rotation);
+  }
+  void loadKeyframe(int i) {
+    _rotation = new Multivector.copy(_keyframes[i]);
+    _needUpdate = true;
+  }
 
   Vector3 rotateVector(Vector3 a, Vector3 b, Vector3 x) {
     return x.reflect(a.normalized()).reflect((a + b).normalized());
   }
   Multivector makeRotation(Vector3 a, Vector3 b) {
-    /*Matrix3 rot;
-    rot = new Matrix3.columns(rotateVector(a, b, new Vector3(1.0, 0.0, 0.0)),
-        rotateVector(a, b, new Vector3(0.0, 1.0, 0.0)),
-        rotateVector(a, b, new Vector3(0.0, 0.0, 1.0)));
-    return new Quaternion.fromRotation(rot);*/
-
-    /* (a1*e1 + e2*a2 + a3*e3)*(b1*e1 + b2*e2 + b3*e3) =
-     * a1*e1*(b1*e1 + b2*e2 + b3*e3) +
-     * a2*e2*(b1*e1 + b2*e2 + b3*e3) +
-     * a3*e3*(b1*e1 + b2*e2 + b3*e3) =
-     * a1*b1       + a1*b2*e1^e2 + a1*b3*e1^e3 +
-     * a2*b1*e2^e1 + a2*b2       + a2*b3*e2^e3 +
-     * a3*b1*e3^e1 + a3*b2*e3^e2 + a3*b3 =
-     *   a1*b1       + a1*b2*e1^e2 + a1*b3*e1^e3 +
-     * - a2*b1*e1^e2 + a2*b2       + a2*b3*e2^e3 +
-     * - a3*b1*e1^e3 - a3*b2*e2^e3 + a3*b3 =
-     * (a1*b1+a2*b2+a3*b3) +
-     * (a1*b2-a2*b1)*e1^e2 +
-     * (a1*b3-a3*b1)*e1^e3 +
-     * (a2*b3-a3*b2)*e2^e3
-     */
-    /* (a1*e1 + a2*e2 + a3*e3)*(e1*e2*e3) =
-     * a1*e2*e3 + a2*e2*e1*e2*e3 + a3*e3*e1*e2*e3 =
-     * a1*e2*e3 - a2*e1*e2*e2*e3 - a3*e1*e3*e2*e3 =
-     * a1*e2*e3 - a2*e1*e2*e2*e3 + a3*e1*e2*e3*e3 =
-     * a1*e2*e3 - a2*e1*e3 + a3*e1*e2 =
-     */
-
     Vector3 bn = b.normalized();
     Vector3 an = a.normalized();
     Vector3 cn = (an + bn).normalized();
-    /*Quaternion out = new Quaternion(an.dot(cn), (an.x * cn.y - an.y * cn.x),
-        (an.x * cn.z - an.z * cn.x), (an.y * cn.z - an.y * cn.z));
-    out.normalize();*/
 
     Multivector aq = new Multivector(an);
     Multivector cq = new Multivector(cn);
 
     Multivector out = aq / cq;
-    //Multivector out = new Multivector.one();
 
     return out;
   }
@@ -206,99 +275,77 @@ class Renderer {
 
     return rotation;
   }
+  void doDrag(Point next, bool endDrag, [double planeDistance = 1.0]) {
+    Multivector rotation = dragRotation(_startDrag, next, planeDistance);
+    _rotation = rotation.versorPower(_rotationPower) * _rotation;
+    _rotationPower *= ROTATION_POWER;
+
+    if (endDrag) {
+      _startDrag = null;
+    } else {
+      _startDrag = next;
+    }
+    _needUpdate = true;
+  }
+
   Renderer(CanvasElement canvas) {
+    _keyframes = new List<Multivector>(3);
+    for (int i = 0; i < 3; i++) {
+      _keyframes[i] = new Multivector.one();
+    }
+
     _viewportWidth = canvas.width;
     _viewportHeight = canvas.height;
 
-    double planeDistance = 1.0;
     _startDrag = null;
     _rotation = new Multivector.one();
     canvas.onMouseDown.listen((MouseEvent e) {
+      _rotationPower = ROTATION_POWER_START;
       _startDrag = e.client;
       e.preventDefault();
     });
 
     canvas.onMouseMove.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Multivector rotation =
-            dragRotation(_startDrag, e.client, planeDistance);
-        for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = rotation * _rotation;
-        }
-
-        _startDrag = e.client;
-        _needUpdate = true;
+        doDrag(e.client, false);
         e.preventDefault();
       }
     });
 
     canvas.onMouseUp.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Multivector rotation =
-            dragRotation(_startDrag, e.client, planeDistance);
-        for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = rotation * _rotation;
-        }
-
-        _startDrag = null;
-        _needUpdate = true;
+        doDrag(e.client, true);
         e.preventDefault();
       }
     });
     canvas.onMouseOut.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Multivector rotation =
-            dragRotation(_startDrag, e.client, planeDistance);
-        for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = rotation * _rotation;
-        }
-
-        _startDrag = null;
-        _needUpdate = true;
+        doDrag(e.client, true);
         e.preventDefault();
       }
     });
 
     canvas.onTouchStart.listen((TouchEvent e) {
       _startDrag = e.touches.first.client;
+      _rotationPower = ROTATION_POWER_START;
+
       e.preventDefault();
     });
     canvas.onTouchMove.listen((TouchEvent e) {
       if (_startDrag != null) {
-        Multivector rotation =
-            dragRotation(_startDrag, e.touches.first.client, planeDistance);
-        for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = rotation * _rotation;
-        }
-
-        _startDrag = e.touches.first.client;
-        _needUpdate = true;
+        doDrag(e.touches.first.client, false);
         e.preventDefault();
       }
     });
     canvas.onTouchLeave.listen((TouchEvent e) {
       if (_startDrag != null) {
-        Multivector rotation =
-            dragRotation(_startDrag, e.touches.first.client, planeDistance);
-        for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = rotation * _rotation;
-        }
-
-        _startDrag = null;
-        _needUpdate = true;
+        doDrag(e.touches.first.client, true);
         e.preventDefault();
       }
     });
     canvas.onTouchCancel.listen((TouchEvent e) {
       if (_startDrag != null) {
-        Multivector rotation =
-            dragRotation(_startDrag, e.touches.first.client, planeDistance);
-        for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = rotation * _rotation;
-        }
-
-        _startDrag = null;
-        _needUpdate = true;
+        doDrag(e.touches.first.client, true);
         e.preventDefault();
       }
     });
@@ -310,7 +357,7 @@ class Renderer {
 
     HttpRequest.getString("models/bunny.json").then((String responseText) {
       Map data = JSON.decode(responseText);
-      //print(data["indices"]);
+
       List<int> indexData = new List<int>();
       List<List<List<double>>> vertexData = new List<List<List<double>>>();
       for (var objectIndices in data["indices"]) {
@@ -322,7 +369,6 @@ class Renderer {
       _setupModel(vertexData, indexData);
       _needUpdate = true;
     });
-    //_setupModel();
 
     _gl.clearColor(0.0, 0.0, 0.0, 1.0);
     _gl.enable(webgl.RenderingContext.DEPTH_TEST);
@@ -334,8 +380,6 @@ class Renderer {
   }
 
   void _initShaders() {
-    // vertex shader source code. uPosition is our variable that we'll
-    // use to create animation
     String vsSource = """
     attribute vec3 vPosition;
     attribute vec3 vNormal;
@@ -352,13 +396,9 @@ class Renderer {
         vec4 mvPos = uMVMatrix * vec4(vPosition,1.0);
         gl_Position = uPMatrix * mvPos;
         fPosition = gl_Position.xyz / gl_Position.w;
-        //fColor = fNormal * 2.0 + 1.0;
-        //fColor += fPosition * 2.0 + 1.0;
     }
     """;
 
-    // fragment shader source code. uColor is our variable that we'll
-    // use to animate color
     String fsSource = """
     precision mediump float;
     uniform sampler2D uSampler;
@@ -495,21 +535,10 @@ class Renderer {
         (q * new Multivector.basisVector(0) * q.inverse()).vector,
         (q * new Multivector.basisVector(1) * q.inverse()).vector,
         (q * new Multivector.basisVector(2) * q.inverse()).vector);
-    /*Matrix3 rot = new Matrix3.columns(
-        (q.inverse() * new Multivector.basisVector(0) * q).vector,
-        (q.inverse() * new Multivector.basisVector(1) * q).vector,
-        (q.inverse() * new Multivector.basisVector(2) * q).vector);*/
 
     Matrix4 out = new Matrix4.identity();
     out.setRotation(rot);
     return out;
-
-    /*Matrix3 rot;
-    rot = new Matrix3.columns(rotateVector(a, b, new Vector3(1.0, 0.0, 0.0)),
-        rotateVector(a, b, new Vector3(0.0, 1.0, 0.0)),
-        rotateVector(a, b, new Vector3(0.0, 0.0, 1.0)));
-    return new Quaternion.fromRotation(rot);*/
-
   }
   void _render() {
     _gl.clear(webgl.RenderingContext.COLOR_BUFFER_BIT |
@@ -542,12 +571,37 @@ class Renderer {
   }
 
   void _gameloop(Timer timer) {
-    if (_needUpdate) {
+    if (_animationProgress != null) {
+      if (_animationProgress < ANIMATION_LENGTH) {
+        double t = _animationProgress / ANIMATION_LENGTH;
+        List<double> coefficients = new List<double>.filled(3, 0.0);
+        coefficients[0] = (1.0 - t) * (1.0 - t);
+        coefficients[1] = 2.0 * (1.0 - t) * t;
+        coefficients[2] = t * t;
+
+        Multivector l = new Multivector.zero();
+        for (int i = 0; i < 3; i++) {
+          l += _keyframes[i].versorLog().scale(coefficients[i]);
+        }
+        _rotation = l.versorExp();
+
+        _render();
+        _animationProgress += 1.0 / TICS_PER_SECOND;
+      } else {
+        _animationProgress = null;
+        _needUpdate = false;
+      }
+    } else if (_needUpdate) {
       _render();
       _needUpdate = false;
     }
   }
 
+  static const ANIMATION_LENGTH = 5.0;
+  double _animationProgress;
+  void startAnimation() {
+    _animationProgress = 0.0;
+  }
   Timer startTimer() {
     const duration = const Duration(milliseconds: 1000 ~/ TICS_PER_SECOND);
 
@@ -557,6 +611,31 @@ class Renderer {
 
 void main() {
   Renderer renderer = new Renderer(querySelector('#screen'));
-
+  querySelector('#saveKeyframe1').onClick.listen((MouseEvent e) {
+    renderer.saveKeyframe(0);
+  });
+  querySelector('#saveKeyframe2').onClick.listen((MouseEvent e) {
+    renderer.saveKeyframe(1);
+  });
+  querySelector('#saveKeyframe3').onClick.listen((MouseEvent e) {
+    renderer.saveKeyframe(2);
+  });
+  querySelector('#loadKeyframe1').onClick.listen((MouseEvent e) {
+    renderer.loadKeyframe(0);
+  });
+  querySelector('#loadKeyframe2').onClick.listen((MouseEvent e) {
+    renderer.loadKeyframe(1);
+  });
+  querySelector('#loadKeyframe3').onClick.listen((MouseEvent e) {
+    renderer.loadKeyframe(2);
+  });
+  querySelector('#resetKeyframes').onClick.listen((MouseEvent e) {
+    for (int i = 0; i < 3; i++) {
+      renderer.resetKeyframe(i);
+    }
+  });
+  querySelector('#animateButton').onClick.listen((MouseEvent e) {
+    renderer.startAnimation();
+  });
   renderer.startTimer();
 }
