@@ -235,6 +235,12 @@ class Renderer {
   static const ROTATION_POWER = 1.002;
   List<Multivector> _keyframes;
 
+  void resetKeyframes() {
+    _keyframes = new List<Multivector>();
+  }
+  void appendKeyframe() {
+    _keyframes.add(new Multivector.copy(_rotation));
+  }
   void resetKeyframe(int i) {
     _keyframes[i] = new Multivector.one();
   }
@@ -244,6 +250,12 @@ class Renderer {
   void loadKeyframe(int i) {
     _rotation = new Multivector.copy(_keyframes[i]);
     _needUpdate = true;
+  }
+  void removeKeyframe(int i) {
+    for (int j = i + 1; j < _keyframes.length; j++) {
+      _keyframes[j - 1] = _keyframes[j];
+    }
+    _keyframes.removeLast();
   }
 
   Vector3 rotateVector(Vector3 a, Vector3 b, Vector3 x) {
@@ -294,10 +306,7 @@ class Renderer {
   }
 
   Renderer(CanvasElement canvas) {
-    _keyframes = new List<Multivector>(4);
-    for (int i = 0; i < _keyframes.length; i++) {
-      _keyframes[i] = new Multivector.one();
-    }
+    _keyframes = new List<Multivector>();
 
     _viewportWidth = canvas.width;
     _viewportHeight = canvas.height;
@@ -674,11 +683,11 @@ class Renderer {
   static const ANIMATION_INTERVAL_LENGTH = 2.0;
   double _animationProgress;
   void startAnimation() {
-    print(_keyframes[2].versorLog());
-
+    if (_keyframes.length < 2) {
+      return;
+    }
     _animationLength = ANIMATION_INTERVAL_LENGTH * (_keyframes.length - 1);
     _animationProgress = 0.0;
-    print(_keyframes);
   }
   Timer startTimer() {
     const duration = const Duration(milliseconds: 1000 ~/ TICS_PER_SECOND);
@@ -689,34 +698,67 @@ class Renderer {
 
 void main() {
   Renderer renderer = new Renderer(querySelector('#screen'));
-  querySelector('#saveKeyframe1').onClick.listen((MouseEvent e) {
-    renderer.saveKeyframe(0);
-  });
-  querySelector('#saveKeyframe2').onClick.listen((MouseEvent e) {
-    renderer.saveKeyframe(1);
-  });
-  querySelector('#saveKeyframe3').onClick.listen((MouseEvent e) {
-    renderer.saveKeyframe(2);
-  });
-  querySelector('#saveKeyframe4').onClick.listen((MouseEvent e) {
-    renderer.saveKeyframe(3);
-  });
-  querySelector('#loadKeyframe1').onClick.listen((MouseEvent e) {
-    renderer.loadKeyframe(0);
-  });
-  querySelector('#loadKeyframe2').onClick.listen((MouseEvent e) {
-    renderer.loadKeyframe(1);
-  });
-  querySelector('#loadKeyframe3').onClick.listen((MouseEvent e) {
-    renderer.loadKeyframe(2);
-  });
-  querySelector('#loadKeyframe4').onClick.listen((MouseEvent e) {
-    renderer.loadKeyframe(3);
-  });
+  {
+    SelectElement keyframeSelect =
+        querySelector('#keyframeSelect') as SelectElement;
+
+    querySelector('#addKeyframe').onClick.listen((MouseEvent e) {
+      OptionElement option = new OptionElement();
+      option.text = (keyframeSelect.length + 1).toString();
+      option.value = keyframeSelect.length.toString();
+      keyframeSelect.append(option);
+      keyframeSelect.selectedIndex = keyframeSelect.options.length - 1;
+
+      renderer.appendKeyframe();
+    });
+
+    querySelector('#removeKeyframe').onClick.listen((MouseEvent e) {
+      OptionElement option =
+          keyframeSelect.options[keyframeSelect.selectedIndex];
+      int index = int.parse(option.value);
+      option.remove();
+      for (int i = 0; i < keyframeSelect.options.length; i++) {
+        OptionElement optioni = keyframeSelect.options[i];
+        if (int.parse(optioni.value) > index) {
+          optioni.value = (int.parse(optioni.value) - 1).toString();
+          optioni.text = (int.parse(optioni.text) - 1).toString();
+        }
+      }
+      if (index < keyframeSelect.length) {
+        keyframeSelect.selectedIndex = index;
+      } else {
+        keyframeSelect.selectedIndex = keyframeSelect.length - 1;
+      }
+      renderer.removeKeyframe(index);
+    });
+
+    querySelector('#saveKeyframe').onClick.listen((MouseEvent e) {
+      OptionElement option =
+          keyframeSelect.options[keyframeSelect.selectedIndex];
+      int index = int.parse(option.value);
+
+      renderer.saveKeyframe(index);
+    });
+
+    keyframeSelect.onChange.listen((Event e) {
+      OptionElement option =
+          keyframeSelect.options[keyframeSelect.selectedIndex];
+      int index = int.parse(option.value);
+
+      renderer.loadKeyframe(index);
+    });
+
+    querySelector('#revertKeyframe').onClick.listen((MouseEvent e) {
+      OptionElement option =
+          keyframeSelect.options[keyframeSelect.selectedIndex];
+      int index = int.parse(option.value);
+
+      renderer.resetKeyframe(index);
+    });
+  }
+
   querySelector('#resetKeyframes').onClick.listen((MouseEvent e) {
-    for (int i = 0; i < 4; i++) {
-      renderer.resetKeyframe(i);
-    }
+    renderer.resetKeyframes();
   });
 
   {
