@@ -9,6 +9,114 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+class Multivector {
+  static const DIMENSION = 1 << 3;
+  List<double> _elements;
+  Multivector.zero() {
+    _elements = new List<double>(DIMENSION);
+    for (int i = 0; i < DIMENSION; i++) {
+      _elements[i] = 0.0;
+    }
+  }
+  Multivector.one() {
+    _elements = new List<double>(DIMENSION);
+    for (int i = 0; i < DIMENSION; i++) {
+      _elements[i] = 0.0;
+    }
+    _elements[0] = 1.0;
+  }
+  Multivector.basisVector(int i) {
+    _elements = new List<double>(DIMENSION);
+    for (int i = 0; i < DIMENSION; i++) {
+      _elements[i] = 0.0;
+    }
+    _elements[1 << i] = 1.0;
+  }
+
+  Multivector(Vector3 v) {
+    _elements = new List<double>(DIMENSION);
+    for (int i = 0; i < DIMENSION; i++) {
+      _elements[i] = 0.0;
+    }
+    _elements[1 << 0] = v.x;
+    _elements[1 << 1] = v.y;
+    _elements[1 << 2] = v.z;
+  }
+
+  Vector3 get vector {
+    return new Vector3(_elements[1<<0], _elements[1<<1], _elements[1<<2]);
+  }
+
+  static int _bitCount(int a) {
+    int c = a;
+    c = (c & 0x5555555555555555) + ((c >> 1) & 0x5555555555555555);
+    c = (c & 0x3333333333333333) + ((c >> 2) & 0x3333333333333333);
+    c = (c & 0x0f0f0f0f0f0f0f0f) + ((c >> 4) & 0x0f0f0f0f0f0f0f0f);
+    c = (c & 0x00ff00ff00ff00ff) + ((c >> 8) & 0x00ff00ff00ff00ff);
+    c = (c & 0x0000ffff0000ffff) + ((c >> 16) & 0x0000ffff0000ffff);
+    c = (c & 0x00000000ffffffff) + ((c >> 32) & 0x00000000ffffffff);
+    return c;
+  }
+  static bool _reorderingSign(int a, int b) {
+    a = a >> 1;
+    int sum = 0;
+    while (a != 0) {
+      sum = sum + Multivector._bitCount(a & b);
+      a = a >> 1;
+    }
+    return sum & 1 == 1;
+  }
+
+  double normSquare() {
+    double t = 0.0;
+    for (int i = 0; i < DIMENSION; i++) {
+      t += _elements[i] * _elements[i];
+    }
+    return t;
+  }
+  Multivector reverse() {
+    Multivector c = new Multivector.zero();
+    for (int i = 0; i < DIMENSION; i++) {
+      double t = _elements[i];
+      c._elements[i] = (Multivector._bitCount(i) & 3) >= 2 ? -t : t;
+    }
+    return c;
+  }
+  
+  Multivector inverse() {
+    Multivector c = new Multivector.zero();
+    double normsq = normSquare();
+
+    for (int i = 0; i < DIMENSION; i++) {
+      double t = _elements[i] / normsq;
+      c._elements[i] = (Multivector._bitCount(i) & 3) >= 2 ? -t : t;
+    }
+    return c;
+  }
+  operator +(Multivector b) {
+    Multivector c = new Multivector.zero();
+    for (int i = 0; i < DIMENSION; i++) {
+      c._elements[i] = _elements[i] + b._elements[i];
+    }
+    return c;
+  }
+
+  operator *(Multivector b) {
+    Multivector c = new Multivector.zero();
+
+    for (int i = 0; i < DIMENSION; i++) {
+      for (int j = 0; j < DIMENSION; j++) {
+        double t = _elements[i] * b._elements[j];
+        c._elements[i ^ j] += Multivector._reorderingSign(i, j) ? -t : t;
+      }
+    }
+    return c;
+  }
+  operator /(Multivector b) {
+    return this * b.inverse();
+  }
+}
+
 class Renderer {
   Matrix4 _pMatrix;
   Matrix4 _mvMatrix;
@@ -33,22 +141,58 @@ class Renderer {
   Vector3 _center;
   double _scale;
   Point _startDrag;
-  Matrix4 _rotation;
+  Multivector _rotation;
   static const ROTATION_POWER = 3;
 
   Vector3 rotateVector(Vector3 a, Vector3 b, Vector3 x) {
     return x.reflect(a.normalized()).reflect((a + b).normalized());
   }
-  Matrix4 makeRotation(Vector3 a, Vector3 b) {
-    Matrix3 rot;
+  Multivector makeRotation(Vector3 a, Vector3 b) {
+    /*Matrix3 rot;
     rot = new Matrix3.columns(rotateVector(a, b, new Vector3(1.0, 0.0, 0.0)),
         rotateVector(a, b, new Vector3(0.0, 1.0, 0.0)),
         rotateVector(a, b, new Vector3(0.0, 0.0, 1.0)));
-    Matrix4 out = new Matrix4.identity();
-    out.setRotation(rot);
+    return new Quaternion.fromRotation(rot);*/
+
+    /* (a1*e1 + e2*a2 + a3*e3)*(b1*e1 + b2*e2 + b3*e3) =
+     * a1*e1*(b1*e1 + b2*e2 + b3*e3) +
+     * a2*e2*(b1*e1 + b2*e2 + b3*e3) +
+     * a3*e3*(b1*e1 + b2*e2 + b3*e3) =
+     * a1*b1       + a1*b2*e1^e2 + a1*b3*e1^e3 +
+     * a2*b1*e2^e1 + a2*b2       + a2*b3*e2^e3 +
+     * a3*b1*e3^e1 + a3*b2*e3^e2 + a3*b3 =
+     *   a1*b1       + a1*b2*e1^e2 + a1*b3*e1^e3 +
+     * - a2*b1*e1^e2 + a2*b2       + a2*b3*e2^e3 +
+     * - a3*b1*e1^e3 - a3*b2*e2^e3 + a3*b3 =
+     * (a1*b1+a2*b2+a3*b3) +
+     * (a1*b2-a2*b1)*e1^e2 +
+     * (a1*b3-a3*b1)*e1^e3 +
+     * (a2*b3-a3*b2)*e2^e3
+     */
+    /* (a1*e1 + a2*e2 + a3*e3)*(e1*e2*e3) =
+     * a1*e2*e3 + a2*e2*e1*e2*e3 + a3*e3*e1*e2*e3 =
+     * a1*e2*e3 - a2*e1*e2*e2*e3 - a3*e1*e3*e2*e3 =
+     * a1*e2*e3 - a2*e1*e2*e2*e3 + a3*e1*e2*e3*e3 =
+     * a1*e2*e3 - a2*e1*e3 + a3*e1*e2 =
+     */
+
+    Vector3 bn = b.normalized();
+    Vector3 an = a.normalized();
+    Vector3 cn = (an + bn).normalized();
+    /*Quaternion out = new Quaternion(an.dot(cn), (an.x * cn.y - an.y * cn.x),
+        (an.x * cn.z - an.z * cn.x), (an.y * cn.z - an.y * cn.z));
+    out.normalize();*/
+
+    Multivector aq = new Multivector(an);
+    Multivector cq = new Multivector(cn);
+
+    Multivector out = aq / cq;
+    //Multivector out = new Multivector.one();
+
     return out;
   }
-  Matrix4 dragRotation(Point start, Point end, [double planeDistance = 1.0]) {
+  Multivector dragRotation(Point start, Point end,
+      [double planeDistance = 1.0]) {
     Vector2 startDrag =
         new Vector2(start.x / _viewportWidth, 1.0 - start.y / _viewportHeight);
     Vector2 endDrag =
@@ -56,7 +200,7 @@ class Renderer {
 
     startDrag -= new Vector2(0.5, 0.5);
     endDrag -= new Vector2(0.5, 0.5);
-    Matrix4 rotation = makeRotation(
+    Multivector rotation = makeRotation(
         new Vector3(startDrag.x, startDrag.y, -planeDistance),
         new Vector3(endDrag.x, endDrag.y, -planeDistance));
 
@@ -68,7 +212,7 @@ class Renderer {
 
     double planeDistance = 1.0;
     _startDrag = null;
-    _rotation = new Matrix4.identity();
+    _rotation = new Multivector.one();
     canvas.onMouseDown.listen((MouseEvent e) {
       _startDrag = e.client;
       e.preventDefault();
@@ -76,9 +220,10 @@ class Renderer {
 
     canvas.onMouseMove.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.client, planeDistance);
+        Multivector rotation =
+            dragRotation(_startDrag, e.client, planeDistance);
         for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = _rotation.multiply(rotation);
+          _rotation = rotation * _rotation;
         }
 
         _startDrag = e.client;
@@ -89,9 +234,10 @@ class Renderer {
 
     canvas.onMouseUp.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.client, planeDistance);
+        Multivector rotation =
+            dragRotation(_startDrag, e.client, planeDistance);
         for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = _rotation.multiply(rotation);
+          _rotation = rotation * _rotation;
         }
 
         _startDrag = null;
@@ -101,9 +247,10 @@ class Renderer {
     });
     canvas.onMouseOut.listen((MouseEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.client, planeDistance);
+        Multivector rotation =
+            dragRotation(_startDrag, e.client, planeDistance);
         for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = _rotation.multiply(rotation);
+          _rotation = rotation * _rotation;
         }
 
         _startDrag = null;
@@ -113,14 +260,15 @@ class Renderer {
     });
 
     canvas.onTouchStart.listen((TouchEvent e) {
-      _startDrag = e.touches.first.client;      
+      _startDrag = e.touches.first.client;
       e.preventDefault();
     });
     canvas.onTouchMove.listen((TouchEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.touches.first.client, planeDistance);
+        Multivector rotation =
+            dragRotation(_startDrag, e.touches.first.client, planeDistance);
         for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = _rotation.multiply(rotation);
+          _rotation = rotation * _rotation;
         }
 
         _startDrag = e.touches.first.client;
@@ -130,21 +278,23 @@ class Renderer {
     });
     canvas.onTouchLeave.listen((TouchEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.touches.first.client, planeDistance);
+        Multivector rotation =
+            dragRotation(_startDrag, e.touches.first.client, planeDistance);
         for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = _rotation.multiply(rotation);
+          _rotation = rotation * _rotation;
         }
 
         _startDrag = null;
         _needUpdate = true;
         e.preventDefault();
-      }    
+      }
     });
     canvas.onTouchCancel.listen((TouchEvent e) {
       if (_startDrag != null) {
-        Matrix4 rotation = dragRotation(_startDrag, e.touches.first.client, planeDistance);
+        Multivector rotation =
+            dragRotation(_startDrag, e.touches.first.client, planeDistance);
         for (int i = 0; i < ROTATION_POWER; i++) {
-          _rotation = _rotation.multiply(rotation);
+          _rotation = rotation * _rotation;
         }
 
         _startDrag = null;
@@ -153,7 +303,6 @@ class Renderer {
       }
     });
 
-    
     _gl = canvas.getContext("experimental-webgl");
 
     _initShaders();
@@ -341,6 +490,27 @@ class Renderer {
   static const TICS_PER_SECOND = 35.0;
   static const double FAR_DISTANCE = 200.0;
 
+  Matrix4 fromVersor(Multivector q) {
+    Matrix3 rot = new Matrix3.columns(
+        (q * new Multivector.basisVector(0) * q.inverse()).vector,
+        (q * new Multivector.basisVector(1) * q.inverse()).vector,
+        (q * new Multivector.basisVector(2) * q.inverse()).vector);
+    /*Matrix3 rot = new Matrix3.columns(
+        (q.inverse() * new Multivector.basisVector(0) * q).vector,
+        (q.inverse() * new Multivector.basisVector(1) * q).vector,
+        (q.inverse() * new Multivector.basisVector(2) * q).vector);*/
+
+    Matrix4 out = new Matrix4.identity();
+    out.setRotation(rot);
+    return out;
+
+    /*Matrix3 rot;
+    rot = new Matrix3.columns(rotateVector(a, b, new Vector3(1.0, 0.0, 0.0)),
+        rotateVector(a, b, new Vector3(0.0, 1.0, 0.0)),
+        rotateVector(a, b, new Vector3(0.0, 0.0, 1.0)));
+    return new Quaternion.fromRotation(rot);*/
+
+  }
   void _render() {
     _gl.clear(webgl.RenderingContext.COLOR_BUFFER_BIT |
         webgl.RenderingContext.DEPTH_BUFFER_BIT);
@@ -349,12 +519,21 @@ class Renderer {
     _pMatrix = makePerspectiveMatrix(
         radians(90.0), _viewportWidth / _viewportHeight, 0.1, FAR_DISTANCE);
 
-    _mvMatrix = new Matrix4.identity();
-    _mvMatrix.translate(0.0, 0.0, -1.5);
-    _mvMatrix.multiplyTranspose(_rotation);
+    //_mvMatrix = new Matrix4.identity();
+    //_mvMatrix.translate(0.0, 0.0, -1.5);
+    //_mvMatrix.multiplyTranspose(_rotation);
+    Matrix4 model = new Matrix4.translation(-_center);
+    Matrix4 rot = fromVersor(_rotation);
 
-    _mvMatrix.translate(-_center);
-    _mvMatrix.scale(_scale);
+    model = rot * model;
+
+    Matrix4 view = new Matrix4.identity();
+    view.translate(0.0, 0.0, -1.5);
+    Matrix4 s = new Matrix4.identity();
+    s.scale(_scale);
+    view = view * s;
+
+    _mvMatrix = view * model;
 
     _setMatrixUniforms();
 
