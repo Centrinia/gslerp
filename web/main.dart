@@ -25,6 +25,16 @@ class Multivector {
       _elements[i] = b._elements[i];
     }
   }
+  Multivector.blade(Multivector b, int grade) {
+    _elements = new List<double>(DIMENSION);
+    for (int i = 0; i < DIMENSION; i++) {
+      if (Multivector._bitCount(i) == grade) {
+        _elements[i] = b._elements[i];
+      } else {
+        _elements[i] = 0.0;
+      }
+    }
+  }
   Multivector.one() {
     _elements = new List<double>(DIMENSION);
     for (int i = 0; i < DIMENSION; i++) {
@@ -58,13 +68,6 @@ class Multivector {
   }
 
   static int _bitCount(int a) {
-    /*int c = a;
-    c = (c & 0x5555555555555555) + ((c >> 1) & 0x5555555555555555);
-    c = (c & 0x3333333333333333) + ((c >> 2) & 0x3333333333333333);
-    c = (c & 0x0f0f0f0f0f0f0f0f) + ((c >> 4) & 0x0f0f0f0f0f0f0f0f);
-    c = (c & 0x00ff00ff00ff00ff) + ((c >> 8) & 0x00ff00ff00ff00ff);
-    c = (c & 0x0000ffff0000ffff) + ((c >> 16) & 0x0000ffff0000ffff);
-    c = (c & 0x00000000ffffffff) + ((c >> 32) & 0x00000000ffffffff);*/
     int s = 0;
     int c = a;
     while (c != 0) {
@@ -84,11 +87,8 @@ class Multivector {
   }
 
   double normSquare() {
-    double t = 0.0;
-    for (int i = 0; i < DIMENSION; i++) {
-      t += _elements[i] * _elements[i];
-    }
-    return t;
+    Multivector c = this * this.reverse();
+    return c.scalar;
   }
   Multivector reverse() {
     Multivector c = new Multivector.zero();
@@ -100,19 +100,21 @@ class Multivector {
   }
 
   Multivector inverse() {
-    Multivector c = new Multivector.zero();
     double normsq = normSquare();
 
-    for (int i = 0; i < DIMENSION; i++) {
-      double t = _elements[i] / normsq;
-      c._elements[i] = (Multivector._bitCount(i) & 3) >= 2 ? -t : t;
-    }
-    return c;
+    return this.reverse().scale(1.0 / normsq);
   }
   operator +(Multivector b) {
     Multivector c = new Multivector.zero();
     for (int i = 0; i < DIMENSION; i++) {
       c._elements[i] = _elements[i] + b._elements[i];
+    }
+    return c;
+  }
+  operator -(Multivector b) {
+    Multivector c = new Multivector.zero();
+    for (int i = 0; i < DIMENSION; i++) {
+      c._elements[i] = _elements[i] - b._elements[i];
     }
     return c;
   }
@@ -160,18 +162,10 @@ class Multivector {
       return x.scale(sinh(alpha) / alpha).addScalar(cosh(alpha));
     }*/
   }
+
   Multivector versorLog() {
-    Multivector c = new Multivector.copy(this);
-    double c2sq = 0.0;
-    for (int i = 0; i < DIMENSION; i++) {
-      if (Multivector._bitCount(i) != 2) {
-        c._elements[i] = 0.0;
-      } else {
-        c2sq += c._elements[i] * c._elements[i];
-      }
-    }
-    double c2norm = sqrt(c2sq);
-    double c0norm = _elements[0] > 0 ? _elements[0] : -_elements[0];
+    Multivector c = new Multivector.blade(this, 2);
+    double c2norm = sqrt(c.normSquare());
 
     if (c2norm <= 0.0) {
       c = new Multivector.zero();
@@ -182,7 +176,7 @@ class Multivector {
       }
       return c;
     }
-    double s = atan2(c2norm, c0norm) / c2norm;
+    double s = atan2(c2norm, _elements[0]) / c2norm;
 
     return c.scale(s);
   }
@@ -258,12 +252,14 @@ class Renderer {
   Multivector makeRotation(Vector3 a, Vector3 b) {
     Vector3 bn = b.normalized();
     Vector3 an = a.normalized();
-    Vector3 cn = (an + bn).normalized();
+    //Vector3 cn = (an + bn).normalized();
 
     Multivector aq = new Multivector(an);
-    Multivector cq = new Multivector(cn);
+    Multivector bq = new Multivector(bn);
+    //Multivector cq = new Multivector(cn);
 
-    Multivector out = aq / cq;
+    Multivector out =
+        (aq * bq).addScalar(0.0).scale(sqrt(2.0 + 2.0 * an.dot(bn)));
 
     return out;
   }
@@ -585,23 +581,84 @@ class Renderer {
     return out;
   }
 
+  double _animationLength;
+
+  static Multivector _interpolateLinear(List<Multivector> keyframes, double t) {
+    Multivector interpolateBetween(int interval, double x) {
+      return keyframes[interval].versorLog().scale(1.0 - x) +
+          keyframes[interval + 1].versorLog().scale(x);
+    }
+    int interval = (t * (keyframes.length - 1)).floor();
+
+    double tk = t * (keyframes.length - 1) - interval;
+    return interpolateBetween(interval, tk).versorExp();
+  }
+  static Multivector _interpolateHermite(
+      List<Multivector> keyframes, double t) {
+    // The tangent.
+    Multivector interpolateBetween(int interval, double x) {
+      double h00(double t) => (1 + 2.0 * t) * (1.0 - t) * (1.0 - t);
+      double h10(double t) => t * (1.0 - t) * (1.0 - t);
+      double h01(double t) => t * t * (3.0 - 2.0 * t);
+      double h11(double t) => t * t * (t - 1.0);
+
+      Multivector getTangent(int k) {
+        double tension = 0.5;
+        if (k == 0) {
+          return (keyframes[k + 1].versorLog() - keyframes[k].versorLog())
+              .scale(1.0 / (2.0 * ANIMATION_INTERVAL_LENGTH));
+        } else if (k == keyframes.length - 1) {
+          return (keyframes[k].versorLog() - keyframes[k - 1].versorLog())
+              .scale(1.0 / (2.0 * ANIMATION_INTERVAL_LENGTH));
+        } else {
+          return (keyframes[k + 1].versorLog() - keyframes[k - 1].versorLog())
+              .scale((1.0 - tension) / ANIMATION_INTERVAL_LENGTH);
+        }
+      }
+
+      Multivector pk = keyframes[interval].versorLog();
+      Multivector pk1 = keyframes[interval + 1].versorLog();
+      Multivector mk = getTangent(interval);
+      Multivector mk1 = getTangent(interval + 1);
+      return pk.scale(h00(x)) +
+          mk.scale(h10(x) * ANIMATION_INTERVAL_LENGTH) +
+          pk1.scale(h01(x)) +
+          mk1.scale(h11(x) * ANIMATION_INTERVAL_LENGTH);
+    }
+
+    int interval = (t * (keyframes.length - 1)).floor();
+
+    double tk = t * (keyframes.length - 1) - interval;
+    return interpolateBetween(interval, tk).versorExp();
+  }
+
+  static Multivector _interpolateBezier(List<Multivector> keyframes, double t) {
+    double power = pow(1.0 - t, keyframes.length - 1.0);
+    Multivector l = new Multivector.zero();
+    for (int i = 0; i < keyframes.length; i++) {
+      double coefficient =
+          power * _binomialCoefficient(keyframes.length - 1, i);
+      power *= t / (1.0 - t);
+      l += keyframes[i].versorLog().scale(coefficient);
+    }
+    return l.versorExp();
+  }
+
+  String _method;
+  set method(String val) => _method = val;
+
   void _gameloop(Timer timer) {
     if (_animationProgress != null) {
-      if (_animationProgress < ANIMATION_LENGTH) {
-        List<double> coefficients =
-            new List<double>.filled(_keyframes.length, 0.0);
-        double t = _animationProgress / ANIMATION_LENGTH;
+      if (_animationProgress < _animationLength) {
+        double t = _animationProgress / _animationLength;
 
-        Multivector l = new Multivector.zero();
-        double power = pow(1.0 - t, _keyframes.length - 1.0);
-        for (int i = 0; i < _keyframes.length; i++) {
-          double coefficient =
-              power * _binomialCoefficient(_keyframes.length - 1, i);
-          power *= t / (1.0 - t);
-          l += _keyframes[i].versorLog().scale(coefficient);
+        if (_method == 'linear') {
+          _rotation = _interpolateLinear(_keyframes, t);
+        } else if (_method == 'hermite') {
+          _rotation = _interpolateHermite(_keyframes, t);
+        } else if (_method == 'bezier') {
+          _rotation = _interpolateBezier(_keyframes, t);
         }
-        _rotation = l.versorExp();
-
         _render();
         _animationProgress += 1.0 / TICS_PER_SECOND;
       } else {
@@ -614,10 +671,14 @@ class Renderer {
     }
   }
 
-  static const ANIMATION_LENGTH = 5.0;
+  static const ANIMATION_INTERVAL_LENGTH = 2.0;
   double _animationProgress;
   void startAnimation() {
+    print(_keyframes[2].versorLog());
+
+    _animationLength = ANIMATION_INTERVAL_LENGTH * (_keyframes.length - 1);
     _animationProgress = 0.0;
+    print(_keyframes);
   }
   Timer startTimer() {
     const duration = const Duration(milliseconds: 1000 ~/ TICS_PER_SECOND);
@@ -657,8 +718,20 @@ void main() {
       renderer.resetKeyframe(i);
     }
   });
+
+  {
+    SelectElement methodSelect =
+        querySelector('#methodSelect') as SelectElement;
+    methodSelect.onChange.listen((Event onData) {
+      renderer.method = methodSelect.value;
+    });
+    methodSelect.value = 'hermite';
+    renderer.method = methodSelect.value;
+  }
+
   querySelector('#animateButton').onClick.listen((MouseEvent e) {
     renderer.startAnimation();
   });
+
   renderer.startTimer();
 }
