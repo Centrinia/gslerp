@@ -2,209 +2,14 @@
 // is governed by a BSD-style license that can be found in the LICENSE file.
 
 import 'dart:html';
-import 'package:vector_math/vector_math.dart';
 import 'dart:web_gl' as webgl;
 import 'dart:typed_data';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
+import 'geometric_algebra.dart';
+import 'package:vector_math/vector_math.dart';
 
-class Multivector {
-  static const VECTOR_DIMENSION = 3;
-  static const DIMENSION = 1 << VECTOR_DIMENSION;
-  List<double> _elements;
-  Multivector.zero() {
-    _elements = new List<double>(DIMENSION);
-    for (int i = 0; i < DIMENSION; i++) {
-      _elements[i] = 0.0;
-    }
-  }
-  Multivector.copy(Multivector b) {
-    _elements = new List<double>(DIMENSION);
-    for (int i = 0; i < DIMENSION; i++) {
-      _elements[i] = b._elements[i];
-    }
-  }
-  Multivector.blade(Multivector b, int grade) {
-    _elements = new List<double>(DIMENSION);
-    for (int i = 0; i < DIMENSION; i++) {
-      if (Multivector._bitCount(i) == grade) {
-        _elements[i] = b._elements[i];
-      } else {
-        _elements[i] = 0.0;
-      }
-    }
-  }
-  Multivector.one() {
-    _elements = new List<double>(DIMENSION);
-    for (int i = 0; i < DIMENSION; i++) {
-      _elements[i] = 0.0;
-    }
-    _elements[0] = 1.0;
-  }
-  Multivector.basisVector(int i) {
-    _elements = new List<double>(DIMENSION);
-    for (int i = 0; i < DIMENSION; i++) {
-      _elements[i] = 0.0;
-    }
-    _elements[1 << i] = 1.0;
-  }
-
-  Multivector(Vector3 v) {
-    _elements = new List<double>(DIMENSION);
-    for (int i = 0; i < DIMENSION; i++) {
-      _elements[i] = 0.0;
-    }
-    _elements[1 << 0] = v.x;
-    _elements[1 << 1] = v.y;
-    _elements[1 << 2] = v.z;
-  }
-
-  double get scalar {
-    return _elements[0];
-  }
-  Vector3 get vector {
-    return new Vector3(_elements[1 << 0], _elements[1 << 1], _elements[1 << 2]);
-  }
-
-  static int _bitCount(int a) {
-    int s = 0;
-    int c = a;
-    while (c != 0) {
-      s += c & 1;
-      c >>= 1;
-    }
-    return s;
-  }
-  static bool _reorderingSign(int a, int b) {
-    a = a >> 1;
-    int sum = 0;
-    while (a != 0) {
-      sum += Multivector._bitCount(a & b);
-      a = a >> 1;
-    }
-    return sum & 1 == 1;
-  }
-
-  double normSquare() {
-    Multivector c = this * this.reverse();
-    return c.scalar;
-  }
-  Multivector reverse() {
-    Multivector c = new Multivector.zero();
-    for (int i = 0; i < DIMENSION; i++) {
-      double t = _elements[i];
-      c._elements[i] = (Multivector._bitCount(i) & 3) >= 2 ? -t : t;
-    }
-    return c;
-  }
-
-  Multivector inverse() {
-    double normsq = normSquare();
-
-    return this.reverse().scale(1.0 / normsq);
-  }
-  operator +(Multivector b) {
-    Multivector c = new Multivector.zero();
-    for (int i = 0; i < DIMENSION; i++) {
-      c._elements[i] = _elements[i] + b._elements[i];
-    }
-    return c;
-  }
-  operator -(Multivector b) {
-    Multivector c = new Multivector.zero();
-    for (int i = 0; i < DIMENSION; i++) {
-      c._elements[i] = _elements[i] - b._elements[i];
-    }
-    return c;
-  }
-
-  Multivector scale(double b) {
-    Multivector c = new Multivector.zero();
-
-    for (int i = 0; i < DIMENSION; i++) {
-      c._elements[i] = _elements[i] * b;
-    }
-    return c;
-  }
-  Multivector addScalar(double b) {
-    Multivector c = new Multivector.copy(this);
-    c._elements[0] += b;
-    return c;
-  }
-  /* The geometric product. */
-  operator *(Multivector b) {
-    Multivector c = new Multivector.zero();
-
-    for (int i = 0; i < DIMENSION; i++) {
-      for (int j = 0; j < DIMENSION; j++) {
-        double t = _elements[i] * b._elements[j];
-        c._elements[i ^ j] += Multivector._reorderingSign(i, j) ? -t : t;
-      }
-    }
-    return c;
-  }
-  operator /(Multivector b) {
-    return this * b.inverse();
-  }
-
-  /* Take e to the power of a blade. */
-  Multivector versorExp() {
-    Multivector xsq = this * this;
-    double alphasq = xsq.scalar;
-    if (alphasq < 0) {
-      double alpha = sqrt(-alphasq);
-      return this.scale(sin(alpha) / alpha).addScalar(cos(alpha));
-    } else /*if (alphasq == 0)*/ {
-      return this.addScalar(1.0);
-    } /* else {
-      double alpha = sqrt(alphasq);
-      return x.scale(sinh(alpha) / alpha).addScalar(cosh(alpha));
-    }*/
-  }
-
-  Multivector versorLog() {
-    Multivector c = new Multivector.blade(this, 2);
-    double c2norm = sqrt(c.normSquare());
-
-    if (c2norm <= 0.0) {
-      c = new Multivector.zero();
-      if (this.scalar < 0) {
-        /* We are asked to compute log(-1). Return a 360 degree rotation in an arbitrary plane. */
-
-        c._elements[(1 << 0) + (1 << 1)] = PI;
-      }
-      return c;
-    }
-    double s = atan2(c2norm, _elements[0]) / c2norm;
-
-    c = c.scale(s);
-    return c;
-  }
-  Multivector versorPower(double b) {
-    Multivector alog = this.versorLog();
-    return alog.scale(b).versorExp();
-  }
-
-  String toString() {
-    String out = "";
-    for (int i = 0; i < DIMENSION; i++) {
-      if (_elements[i] != 0) {
-        String basis_vector = "";
-        for (int j = 0; j < VECTOR_DIMENSION; j++) {
-          if (((i >> j) & 1) != 0) {
-            basis_vector += basis_vector != "" ? "^" : "";
-            basis_vector += "e_" + (j + 1).toString();
-          }
-        }
-        out += out != "" ? " + " : "";
-        out += _elements[i].toString() + (i != 0 ? "*" : "") + basis_vector;
-      }
-    }
-    out += out == "" ? "0" : "";
-    return out;
-  }
-}
 
 class Renderer {
   Matrix4 _pMatrix;
@@ -237,30 +42,30 @@ class Renderer {
   List<Multivector> _keyframes;
 
   void resetKeyframes() {
-    pauseAnimation();
+    stopAnimation();
     _keyframes = new List<Multivector>();
     reset();
   }
   void appendKeyframe(int i) {
-    pauseAnimation();
+    stopAnimation();
     _keyframes.insert(i + 1, new Multivector.copy(_rotation));
   }
   void resetKeyframe(int i) {
-    pauseAnimation();
+    stopAnimation();
     _keyframes[i] = new Multivector.one();
     reset();
   }
   void saveKeyframe(int i) {
-    pauseAnimation();
+    stopAnimation();
     _keyframes[i] = new Multivector.copy(_rotation);
   }
   void loadKeyframe(int i) {
-    pauseAnimation();
+    stopAnimation();
     _rotation = new Multivector.copy(_keyframes[i]);
     update();
   }
   void removeKeyframe(int i) {
-    pauseAnimation();
+    stopAnimation();
     for (int j = i + 1; j < _keyframes.length; j++) {
       _keyframes[j - 1] = _keyframes[j];
     }
@@ -668,6 +473,9 @@ class Renderer {
 
   void _gameloop(Timer timer) {
     if (_animationProgress != null) {
+      while(cycleAnimation && _animationProgress>=_animationLength){
+        _animationProgress -= _animationLength;
+      }
       if (_animationProgress < _animationLength) {
         double t = _animationProgress / _animationLength;
 
@@ -689,6 +497,7 @@ class Renderer {
       _needUpdate = false;
     }
   }
+  bool cycleAnimation = false;
 
   static const ANIMATION_INTERVAL_LENGTH = 2.0;
   double _animationProgress;
@@ -699,7 +508,7 @@ class Renderer {
     _animationLength = ANIMATION_INTERVAL_LENGTH * (_keyframes.length - 1);
     _animationProgress = 0.0;
   }
-  void pauseAnimation() {
+  void stopAnimation() {
     _animationProgress = null;
   }
   Timer startTimer() {
@@ -806,7 +615,14 @@ void main() {
       }
     });
   }
+  {
+CheckboxInputElement cycleElement = querySelector('#cycleOption');
 
+cycleElement.onChange.listen((Event e){
+ renderer.cycleAnimation = cycleElement.checked; 
+});
+renderer.cycleAnimation = cycleElement.checked; 
+  }
   {
     SelectElement methodSelect =
         querySelector('#methodSelect') as SelectElement;
@@ -820,8 +636,8 @@ void main() {
   querySelector('#animateButton').onClick.listen((MouseEvent e) {
     renderer.startAnimation();
   });
-  querySelector('#pauseButton').onClick.listen((MouseEvent e) {
-    renderer.pauseAnimation();
+  querySelector('#stopButton').onClick.listen((MouseEvent e) {
+    renderer.stopAnimation();
   });
 
   renderer.startTimer();

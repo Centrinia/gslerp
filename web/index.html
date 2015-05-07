@@ -7,46 +7,48 @@
 
 <html>
 <head>
-    <meta charset="utf-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="scaffolded-by" content="https://github.com/google/stagehand">
-    <title>gslerp</title>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="scaffolded-by" content="https://github.com/google/stagehand">
+<title>gslerp</title>
 
-    <link rel="stylesheet" href="styles/main.css">
+<link rel="stylesheet" href="styles/main.css">
 </head>
 
 <body>
 
-    <div id="screen_container">
-   <canvas id="screen" width="800" height="800"></canvas>
-    </div>
-    Drag to rotate.
-    <div>
-    Keyframe: <select id='keyframeSelect'>
-    </select>
-    </div>
+	<div id="screen_container">
+		<canvas id="screen" width="800" height="800"></canvas>
+	</div>
+	Drag to rotate.
+	<div>
+		Keyframe: <select id='keyframeSelect'>
+		</select>
+	</div>
+
+	<div>
+		<button id="addKeyframe">Add Keyframe</button>
+		<button id="saveKeyframe">Save Keyframe</button>
+	</div>
+	<div>
+		<button id="revertKeyframe">Revert Keyframe</button>
+		<button id="removeKeyframe">Remove Keyframe</button>
+	</div>
+	<div>
+		<button id="resetKeyframes">Reset Keyframes</button>
+		<button id="animateButton">Animate</button>
+		<button id="stopButton">Stop</button>
+        <input type="checkbox" id="cycleOption">Cycle</checkbox>
     
-    <div>
-    <button id="addKeyframe">Add Keyframe</button>
-    <button id="saveKeyframe">Save Keyframe</button>
-    </div>
-    <div>
-    <button id="revertKeyframe">Revert Keyframe</button>
-    <button id="removeKeyframe">Remove Keyframe</button>
-    </div>
-    <div>
-    <button id="resetKeyframes">Reset Keyframes</button>
-    <button id="animateButton">Animate</button>
-    <button id="pauseButton">Pause</button>
-    </div>
-    Interpolation method: 
-    <select id='methodSelect'>
-      <option value="hermite">Piecewise Cubic</option>
-      <option value="linear">Piecewise Linear</option>
-      <option value="bezier">Bezier</option>
-    </select>
-<script type="application/dart" src="main.dart"></script>
-<script data-pub-inline src="packages/browser/dart.js"></script>
+	</div>
+	Interpolation method:
+	<select id='methodSelect'>
+		<option value="hermite">Piecewise Cubic</option>
+		<option value="linear">Piecewise Linear</option>
+		<option value="bezier">Bezier</option>
+	</select>
+	<script type="application/dart" src="main.dart"></script>
+	<script data-pub-inline src="packages/browser/dart.js"></script>
 </body>
 </html>
