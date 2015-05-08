@@ -1,5 +1,6 @@
 library multivector_test;
 
+import 'package:vector_math/vector_math.dart';
 import 'package:unittest/unittest.dart';
 import 'geometric_algebra.dart';
 import 'dart:math';
@@ -67,6 +68,13 @@ main() {
         expect(t, equals(a.at(i)));
       }
     }
+  });
+  test("versor product",() {
+    Multivector a = new Multivector(new Vector3(1.0,0.0,0.0));
+    Multivector b = new Multivector(new Vector3(1.0,1.0,0.0));
+    Multivector x = new Multivector(new Vector3(1.0,2.0,3.0));
+    Multivector y = new Multivector(new Vector3(-4.0,2.0,6.0));
+    expect((b*a)*x*(b*a).reverse(),equals(y));
   });
   
 }

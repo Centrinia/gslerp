@@ -81,13 +81,9 @@ class Renderer {
     Vector3 cn = (an + bn).normalized();
 
     Multivector aq = new Multivector(an);
-    //Multivector bq = new Multivector(bn);
     Multivector cq = new Multivector(cn);
 
-    /*Multivector out =
-        (aq * bq).addScalar(1.0).scale(sqrt(2.0 + 2.0 * an.dot(bn)));*/
-    //Multivector out = cq / aq;
-    Multivector out = (cq.inverse() / aq.inverse()).inverse();
+    Multivector out = cq / aq;
     return out;
   }
   Multivector dragRotation(Point start, Point end,
@@ -100,8 +96,8 @@ class Renderer {
     startDrag -= new Vector2(0.5, 0.5);
     endDrag -= new Vector2(0.5, 0.5);
     Multivector rotation = makeRotation(
-        new Vector3(startDrag.x, startDrag.y, -planeDistance),
-        new Vector3(endDrag.x, endDrag.y, -planeDistance));
+        new Vector3(startDrag.x, startDrag.y, planeDistance),
+        new Vector3(endDrag.x, endDrag.y, planeDistance));
 
     return rotation;
   }
