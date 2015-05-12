@@ -13,23 +13,25 @@ import 'package:vector_math/vector_math.dart';
 class Renderer {
   Matrix4 _pMatrix;
   Matrix4 _mvMatrix;
-  
+
   webgl.Texture _texture;
+
+  bool _ready;
 
   webgl.Program _backgroundShaderProgram;
   webgl.Program _shaderProgram;
   webgl.RenderingContext _gl;
 
-  
   int _aVertexPosition;
   int _aVertexNormal;
   int _aBackgroundVertexPosition;
   webgl.UniformLocation _backgroundUCubeSampler;
   webgl.UniformLocation _backgroundUPMatrix;
   webgl.UniformLocation _backgroundUMVMatrix;
-  
+
   webgl.UniformLocation _uPMatrix;
   webgl.UniformLocation _uMVMatrix;
+  webgl.UniformLocation _uIMVMatrix;
   webgl.UniformLocation _uNMatrix;
   bool _needUpdate;
 
@@ -130,6 +132,7 @@ class Renderer {
   }
 
   Renderer(CanvasElement canvas) {
+    _ready = false;
     _keyframes = new List<Multivector>();
 
     _viewportWidth = canvas.width;
@@ -225,7 +228,7 @@ class Renderer {
     uniform mat4 uPMatrix;
     varying vec3 fPosition;
     void main(void) {
-      vec4 t =  uMVMatrix * vec4(vPosition,1.0,-1.0);
+      vec4 t =  uMVMatrix * vec4(vPosition,0.0,-1.0);
       fPosition = t.xyz;
       gl_Position = vec4(vPosition,0.0,1.0);
     }
@@ -246,16 +249,21 @@ class Renderer {
     uniform mat4 uMVMatrix;
     uniform mat3 uNMatrix;
     uniform mat4 uPMatrix;
+    uniform mat4 uIMVMatrix;
+
     varying vec3 fPosition;
     varying vec3 fNormal;
     varying vec3 fColor;
+    varying vec4 refracted;
     void main(void) {
         fColor = vec3(1.0,1.0,1.0);
         
         fNormal = uNMatrix * vNormal;
         vec4 mvPos = uMVMatrix * vec4(vPosition,1.0);
         gl_Position = uPMatrix * mvPos;
-        fPosition = gl_Position.xyz / gl_Position.w;
+        //fPosition = normalize(gl_Position.xyz / gl_Position.w);
+        fPosition = gl_Position.xyz;
+        refracted = uIMVMatrix * vec4(reflect(fPosition,fNormal),0.0);
     }
     """;
 
@@ -264,11 +272,16 @@ class Renderer {
     varying vec3 fPosition;
     varying vec3 fNormal;
     varying vec3 fColor;
+    varying vec4 refracted;
+    uniform samplerCube uSampler;
+
     void main(void) {
         float attenuation = 0.0;
-        attenuation += max(0.0, dot(fNormal, -normalize(fPosition))); 
-
-        gl_FragColor = vec4(fColor * attenuation,1.0);
+        attenuation += max(0.0, dot(fNormal, -fPosition));
+        vec3 color = 0.2 * fColor;
+        // Reflected light.
+        color += 0.8 * textureCube(uSampler, -refracted.xyz).rgb;
+        gl_FragColor = vec4(color * attenuation,1.0);
     }
     """;
 
@@ -356,9 +369,12 @@ class Renderer {
 
     _uPMatrix = _gl.getUniformLocation(_shaderProgram, "uPMatrix");
     _uMVMatrix = _gl.getUniformLocation(_shaderProgram, "uMVMatrix");
+    _uIMVMatrix = _gl.getUniformLocation(_shaderProgram, "uIMVMatrix");
     _uNMatrix = _gl.getUniformLocation(_shaderProgram, "uNMatrix");
-    _backgroundUPMatrix = _gl.getUniformLocation(_backgroundShaderProgram, "uPMatrix");
-    _backgroundUMVMatrix = _gl.getUniformLocation(_backgroundShaderProgram, "uMVMatrix");
+    _backgroundUPMatrix =
+        _gl.getUniformLocation(_backgroundShaderProgram, "uPMatrix");
+    _backgroundUMVMatrix =
+        _gl.getUniformLocation(_backgroundShaderProgram, "uMVMatrix");
   }
 
   void _setMatrixUniforms() {
@@ -368,6 +384,12 @@ class Renderer {
     Float32List modelviewList = new Float32List(16);
     _mvMatrix.copyIntoArray(modelviewList);
 
+    Float32List inverseModelviewList = new Float32List(16);
+
+    Matrix4 t = new Matrix4.copy(_mvMatrix);
+    t.invert();
+    t.copyIntoArray(inverseModelviewList);
+
     Float32List normalList = new Float32List(9);
     Matrix3 nMatrix = new Matrix3.columns(
         _mvMatrix.row0.xyz, _mvMatrix.row1.xyz, _mvMatrix.row2.xyz);
@@ -375,49 +397,80 @@ class Renderer {
     nMatrix.invert();
     nMatrix *= pow(det, 1.0 / 3.0);
     nMatrix.copyIntoArray(normalList);
-    
+
     _gl.useProgram(_shaderProgram);
     _gl.uniformMatrix4fv(_uPMatrix, false, perspectiveList);
     _gl.uniformMatrix4fv(_uMVMatrix, false, modelviewList);
+    _gl.uniformMatrix4fv(_uIMVMatrix, false, inverseModelviewList);
     _gl.uniformMatrix3fv(_uNMatrix, false, normalList);
 
     _gl.useProgram(_backgroundShaderProgram);
-    Matrix4 t = new Matrix4.copy(_mvMatrix);
-    t.invert();
-    t.copyIntoArray(modelviewList);
     _gl.uniformMatrix4fv(_backgroundUPMatrix, false, perspectiveList);
-    _gl.uniformMatrix4fv(_backgroundUMVMatrix, false, modelviewList);
-    
+    _gl.uniformMatrix4fv(_backgroundUMVMatrix, false, inverseModelviewList);
   }
 
   void _setupTextures() {
     List<String> imageDescriptions = [
-      {'filename': 'negx.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_X},
-      {'filename': 'posx.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_X},
-      {'filename': 'negy.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_Y},
-      {'filename': 'posy.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_Y},
-      {'filename': 'negz.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_Z},
-      {'filename': 'posz.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_Z}
+      {
+        'filename': 'negx.jpg',
+        'side': webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_X
+      },
+      {
+        'filename': 'posx.jpg',
+        'side': webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_X
+      },
+      {
+        'filename': 'negy.jpg',
+        'side': webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_Y
+      },
+      {
+        'filename': 'posy.jpg',
+        'side': webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_Y
+      },
+      {
+        'filename': 'negz.jpg',
+        'side': webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_Z
+      },
+      {
+        'filename': 'posz.jpg',
+        'side': webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_Z
+      }
     ];
     String imageDir = "textures/";
 
-    _gl.useProgram(_backgroundShaderProgram);
-    _texture = _gl.createTexture();
     _gl.activeTexture(webgl.TEXTURE0);
+
+    _gl.useProgram(_shaderProgram);
+    _texture = _gl.createTexture();
     _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
-    _gl.uniform1i(_gl.getUniformLocation(_backgroundShaderProgram, "uSampler"), 0);
-    _gl.texParameteri(webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
-    _gl.texParameteri(webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
-    
+    _gl.uniform1i(_gl.getUniformLocation(_shaderProgram, "uSampler"), 0);
+    _gl.texParameteri(
+        webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+    _gl.texParameteri(
+        webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+
+    _gl.useProgram(_backgroundShaderProgram);
+    _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
+    _gl.uniform1i(
+        _gl.getUniformLocation(_backgroundShaderProgram, "uSampler"), 0);
+    _gl.texParameteri(
+        webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+    _gl.texParameteri(
+        webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+
+    int ready = 0;
     for (Map imageDescription in imageDescriptions) {
       String imageName = imageDescription['filename'];
       int side = imageDescription['side'];
       ImageElement image = new ImageElement();
       //bool imageReady = false;
       image.onLoad.listen((e) {
-        _gl.texImage2DImage(side, 0, webgl.RGBA, webgl.RGBA,
-            webgl.UNSIGNED_BYTE, image);
-        //imageReady = true;
+        _gl.texImage2DImage(
+            side, 0, webgl.RGBA, webgl.RGBA, webgl.UNSIGNED_BYTE, image);
+        ready++;
+        if (ready == 6) {
+          _ready = true;
+        }
       }, onError: (e) => print(e));
       image.src = imageDir + imageName;
     }
@@ -641,6 +694,9 @@ class Renderer {
   set method(String val) => _method = val;
 
   void _gameloop(Timer timer) {
+    if (!_ready) {
+      return;
+    }
     if (_animationProgress != null) {
       while (cycleAnimation && _animationProgress >= _animationLength) {
         _animationProgress -= _animationLength;
