@@ -255,15 +255,16 @@ class Renderer {
     varying vec3 fNormal;
     varying vec3 fColor;
     varying vec4 refracted;
+    varying vec4 reflected;
     void main(void) {
         fColor = vec3(1.0,1.0,1.0);
         
         fNormal = uNMatrix * vNormal;
         vec4 mvPos = uMVMatrix * vec4(vPosition,1.0);
         gl_Position = uPMatrix * mvPos;
-        //fPosition = normalize(gl_Position.xyz / gl_Position.w);
         fPosition = gl_Position.xyz;
-        refracted = uIMVMatrix * vec4(reflect(fPosition,fNormal),0.0);
+        reflected = uIMVMatrix * vec4(reflect(-fPosition,fNormal),0.0);
+        refracted = uIMVMatrix * vec4(fPosition,-1.0);
     }
     """;
 
@@ -273,14 +274,17 @@ class Renderer {
     varying vec3 fNormal;
     varying vec3 fColor;
     varying vec4 refracted;
+    varying vec4 reflected;
     uniform samplerCube uSampler;
 
     void main(void) {
         float attenuation = 0.0;
         attenuation += max(0.0, dot(fNormal, -fPosition));
-        vec3 color = 0.2 * fColor;
+        vec3 color = 0.1 * fColor;
         // Reflected light.
-        color += 0.8 * textureCube(uSampler, -refracted.xyz).rgb;
+        color += 0.5 * textureCube(uSampler, reflected.xyz).rgb;
+        // Transmitted light.
+        color += 0.4 * textureCube(uSampler, refracted.xyz).rgb;
         gl_FragColor = vec4(color * attenuation,1.0);
     }
     """;
