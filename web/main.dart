@@ -10,14 +10,24 @@ import 'dart:math';
 import 'geometric_algebra.dart';
 import 'package:vector_math/vector_math.dart';
 
-
 class Renderer {
   Matrix4 _pMatrix;
   Matrix4 _mvMatrix;
+  
+  webgl.Texture _texture;
+
+  webgl.Program _backgroundShaderProgram;
   webgl.Program _shaderProgram;
   webgl.RenderingContext _gl;
+
+  
   int _aVertexPosition;
   int _aVertexNormal;
+  int _aBackgroundVertexPosition;
+  webgl.UniformLocation _backgroundUCubeSampler;
+  webgl.UniformLocation _backgroundUPMatrix;
+  webgl.UniformLocation _backgroundUMVMatrix;
+  
   webgl.UniformLocation _uPMatrix;
   webgl.UniformLocation _uMVMatrix;
   webgl.UniformLocation _uNMatrix;
@@ -30,6 +40,9 @@ class Renderer {
 
   webgl.Buffer _vertexBuffer;
   webgl.Buffer _indexBuffer;
+
+  webgl.Buffer _backgroundVertexBuffer;
+  int _backgroundVertexCount;
 
   int _vertexCount;
   Vector3 _center;
@@ -195,8 +208,9 @@ class Renderer {
       _needUpdate = true;
     });
 
+    _setupTextures();
+
     _gl.clearColor(0.0, 0.0, 0.0, 1.0);
-    _gl.enable(webgl.RenderingContext.DEPTH_TEST);
 
     _gl.viewport(0, 0, _viewportWidth, _viewportHeight);
     _gl.clearColor(0, 0, 0, 1);
@@ -205,6 +219,27 @@ class Renderer {
   }
 
   void _initShaders() {
+    String bgvsSource = """
+    attribute vec2 vPosition;
+    uniform mat4 uMVMatrix;
+    uniform mat4 uPMatrix;
+    varying vec3 fPosition;
+    void main(void) {
+      vec4 t =  uMVMatrix * vec4(vPosition,1.0,-1.0);
+      fPosition = t.xyz;
+      gl_Position = vec4(vPosition,0.0,1.0);
+    }
+    """;
+    String bgfsSource = """
+    precision mediump float;
+    varying vec3 fPosition;
+    uniform samplerCube uSampler;
+    void main(void) {
+      vec4 fColor = textureCube(uSampler, fPosition);
+      gl_FragColor = fColor;
+    }
+    """;
+
     String vsSource = """
     attribute vec3 vPosition;
     attribute vec3 vNormal;
@@ -226,7 +261,6 @@ class Renderer {
 
     String fsSource = """
     precision mediump float;
-    uniform sampler2D uSampler;
     varying vec3 fPosition;
     varying vec3 fNormal;
     varying vec3 fColor;
@@ -237,6 +271,45 @@ class Renderer {
         gl_FragColor = vec4(fColor * attenuation,1.0);
     }
     """;
+
+    /* Attach background shaders to the program and link it. */
+    webgl.Shader bgvs = _gl.createShader(webgl.RenderingContext.VERTEX_SHADER);
+    _gl.shaderSource(bgvs, bgvsSource);
+    _gl.compileShader(bgvs);
+
+    webgl.Shader bgfs =
+        _gl.createShader(webgl.RenderingContext.FRAGMENT_SHADER);
+    _gl.shaderSource(bgfs, bgfsSource);
+    _gl.compileShader(bgfs);
+
+    _backgroundShaderProgram = _gl.createProgram();
+    _gl.attachShader(_backgroundShaderProgram, bgvs);
+    _gl.attachShader(_backgroundShaderProgram, bgfs);
+    _gl.linkProgram(_backgroundShaderProgram);
+
+    _gl.useProgram(_backgroundShaderProgram);
+
+    /**
+     * Check if shaders were compiled properly. This is probably the most painful part
+     * since there's no way to "debug" shader compilation
+     */
+    if (!_gl.getShaderParameter(bgvs, webgl.RenderingContext.COMPILE_STATUS)) {
+      print(_gl.getShaderInfoLog(bgvs));
+    }
+
+    if (!_gl.getShaderParameter(bgfs, webgl.RenderingContext.COMPILE_STATUS)) {
+      print(_gl.getShaderInfoLog(bgfs));
+    }
+
+    if (!_gl.getProgramParameter(
+        _backgroundShaderProgram, webgl.RenderingContext.LINK_STATUS)) {
+      print(_gl.getProgramInfoLog(_backgroundShaderProgram));
+    }
+
+    _backgroundVertexBuffer = _gl.createBuffer();
+    _aBackgroundVertexPosition =
+        _gl.getAttribLocation(_backgroundShaderProgram, "vPosition");
+    _gl.enableVertexAttribArray(_aBackgroundVertexPosition);
 
     // vertex shader compilation
     webgl.Shader vs = _gl.createShader(webgl.RenderingContext.VERTEX_SHADER);
@@ -284,27 +357,71 @@ class Renderer {
     _uPMatrix = _gl.getUniformLocation(_shaderProgram, "uPMatrix");
     _uMVMatrix = _gl.getUniformLocation(_shaderProgram, "uMVMatrix");
     _uNMatrix = _gl.getUniformLocation(_shaderProgram, "uNMatrix");
+    _backgroundUPMatrix = _gl.getUniformLocation(_backgroundShaderProgram, "uPMatrix");
+    _backgroundUMVMatrix = _gl.getUniformLocation(_backgroundShaderProgram, "uMVMatrix");
   }
 
   void _setMatrixUniforms() {
-    Float32List tmpList = new Float32List(16);
+    Float32List perspectiveList = new Float32List(16);
+    _pMatrix.copyIntoArray(perspectiveList);
 
-    _pMatrix.copyIntoArray(tmpList);
-    _gl.uniformMatrix4fv(_uPMatrix, false, tmpList);
+    Float32List modelviewList = new Float32List(16);
+    _mvMatrix.copyIntoArray(modelviewList);
 
-    _mvMatrix.copyIntoArray(tmpList);
-    _gl.uniformMatrix4fv(_uMVMatrix, false, tmpList);
-
-    tmpList = new Float32List(9);
+    Float32List normalList = new Float32List(9);
     Matrix3 nMatrix = new Matrix3.columns(
         _mvMatrix.row0.xyz, _mvMatrix.row1.xyz, _mvMatrix.row2.xyz);
     double det = nMatrix.determinant();
     nMatrix.invert();
     nMatrix *= pow(det, 1.0 / 3.0);
-    nMatrix.copyIntoArray(tmpList);
-    _gl.uniformMatrix3fv(_uNMatrix, false, tmpList);
+    nMatrix.copyIntoArray(normalList);
+    
+    _gl.useProgram(_shaderProgram);
+    _gl.uniformMatrix4fv(_uPMatrix, false, perspectiveList);
+    _gl.uniformMatrix4fv(_uMVMatrix, false, modelviewList);
+    _gl.uniformMatrix3fv(_uNMatrix, false, normalList);
+
+    _gl.useProgram(_backgroundShaderProgram);
+    Matrix4 t = new Matrix4.copy(_mvMatrix);
+    t.invert();
+    t.copyIntoArray(modelviewList);
+    _gl.uniformMatrix4fv(_backgroundUPMatrix, false, perspectiveList);
+    _gl.uniformMatrix4fv(_backgroundUMVMatrix, false, modelviewList);
+    
   }
 
+  void _setupTextures() {
+    List<String> imageDescriptions = [
+      {'filename': 'negx.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_X},
+      {'filename': 'posx.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_X},
+      {'filename': 'negy.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_Y},
+      {'filename': 'posy.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_Y},
+      {'filename': 'negz.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_NEGATIVE_Z},
+      {'filename': 'posz.jpg', 'side':webgl.RenderingContext.TEXTURE_CUBE_MAP_POSITIVE_Z}
+    ];
+    String imageDir = "textures/";
+
+    _gl.useProgram(_backgroundShaderProgram);
+    _texture = _gl.createTexture();
+    _gl.activeTexture(webgl.TEXTURE0);
+    _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
+    _gl.uniform1i(_gl.getUniformLocation(_backgroundShaderProgram, "uSampler"), 0);
+    _gl.texParameteri(webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+    _gl.texParameteri(webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+    
+    for (Map imageDescription in imageDescriptions) {
+      String imageName = imageDescription['filename'];
+      int side = imageDescription['side'];
+      ImageElement image = new ImageElement();
+      //bool imageReady = false;
+      image.onLoad.listen((e) {
+        _gl.texImage2DImage(side, 0, webgl.RGBA, webgl.RGBA,
+            webgl.UNSIGNED_BYTE, image);
+        //imageReady = true;
+      }, onError: (e) => print(e));
+      image.src = imageDir + imageName;
+    }
+  }
   void _setupModel(List<List<List<double>>> vertexes, List<int> indexData) {
     List<double> buffer = new List<double>();
 
@@ -335,19 +452,49 @@ class Renderer {
     _scale /= vertexes.length.toDouble();
     _scale /= 2.0;
 
+    _gl.useProgram(_shaderProgram);
     _gl.bindBuffer(webgl.RenderingContext.ARRAY_BUFFER, _vertexBuffer);
     _gl.vertexAttribPointer(_aVertexPosition, 3, webgl.RenderingContext.FLOAT,
         false, stride, positionOffset);
     _gl.vertexAttribPointer(_aVertexNormal, 3, webgl.RenderingContext.FLOAT,
         false, stride, normalOffset);
-
     _gl.bufferDataTyped(webgl.RenderingContext.ARRAY_BUFFER,
         new Float32List.fromList(buffer), webgl.RenderingContext.STATIC_DRAW);
 
     _gl.bindBuffer(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _indexBuffer);
-
     _gl.bufferDataTyped(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER,
         new Int16List.fromList(indexData), webgl.RenderingContext.STATIC_DRAW);
+
+    _gl.useProgram(_backgroundShaderProgram);
+
+    _backgroundVertexCount = 6;
+    List<double> backgroundBuffer = [
+      //
+      -1.0,
+      -1.0,
+      //
+      1.0,
+      -1.0,
+      //
+      -1.0,
+      1.0,
+      //
+      -1.0,
+      1.0,
+      //
+      1.0,
+      -1.0,
+      //
+      1.0,
+      1.0
+    ];
+    _gl.bindBuffer(
+        webgl.RenderingContext.ARRAY_BUFFER, _backgroundVertexBuffer);
+    _gl.vertexAttribPointer(_aBackgroundVertexPosition, 2,
+        webgl.RenderingContext.FLOAT, false, 2 * 4, 0);
+    _gl.bufferDataTyped(webgl.RenderingContext.ARRAY_BUFFER,
+        new Float32List.fromList(backgroundBuffer),
+        webgl.RenderingContext.STATIC_DRAW);
   }
 
   int _viewportWidth;
@@ -387,6 +534,32 @@ class Renderer {
     _mvMatrix = view * model;
 
     _setMatrixUniforms();
+    /* Render the model. */
+
+    /* Render the background. */
+    _gl.disable(webgl.RenderingContext.DEPTH_TEST);
+
+    _gl.useProgram(_backgroundShaderProgram);
+    _gl.bindBuffer(
+        webgl.RenderingContext.ARRAY_BUFFER, _backgroundVertexBuffer);
+    _gl.vertexAttribPointer(_aBackgroundVertexPosition, 2,
+        webgl.RenderingContext.FLOAT, false, 2 * 4, 0);
+
+    _gl.activeTexture(webgl.TEXTURE0);
+
+    _gl.drawArrays(webgl.RenderingContext.TRIANGLES, 0, _backgroundVertexCount);
+
+    _gl.enable(webgl.RenderingContext.DEPTH_TEST);
+    _gl.useProgram(_shaderProgram);
+    _gl.bindBuffer(webgl.RenderingContext.ARRAY_BUFFER, _vertexBuffer);
+    _gl.vertexAttribPointer(_aVertexPosition, 3, webgl.RenderingContext.FLOAT,
+        false, stride, positionOffset);
+    _gl.vertexAttribPointer(_aVertexNormal, 3, webgl.RenderingContext.FLOAT,
+        false, stride, normalOffset);
+
+    _gl.bindBuffer(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _indexBuffer);
+
+    //_gl.activeTexture(0);
 
     _gl.drawElements(webgl.RenderingContext.TRIANGLES, _vertexCount,
         webgl.RenderingContext.UNSIGNED_SHORT, 0);
@@ -469,7 +642,7 @@ class Renderer {
 
   void _gameloop(Timer timer) {
     if (_animationProgress != null) {
-      while(cycleAnimation && _animationProgress>=_animationLength){
+      while (cycleAnimation && _animationProgress >= _animationLength) {
         _animationProgress -= _animationLength;
       }
       if (_animationProgress < _animationLength) {
@@ -612,12 +785,12 @@ void main() {
     });
   }
   {
-CheckboxInputElement cycleElement = querySelector('#cycleOption');
+    CheckboxInputElement cycleElement = querySelector('#cycleOption');
 
-cycleElement.onChange.listen((Event e){
- renderer.cycleAnimation = cycleElement.checked; 
-});
-renderer.cycleAnimation = cycleElement.checked; 
+    cycleElement.onChange.listen((Event e) {
+      renderer.cycleAnimation = cycleElement.checked;
+    });
+    renderer.cycleAnimation = cycleElement.checked;
   }
   {
     SelectElement methodSelect =

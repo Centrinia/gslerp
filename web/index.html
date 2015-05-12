@@ -18,37 +18,67 @@
 
 <body>
 
-	<div id="screen_container">
-		<canvas id="screen" width="800" height="800"></canvas>
-	</div>
-	Drag to rotate.
-	<div>
-		Keyframe: <select id='keyframeSelect'>
-		</select>
-	</div>
+  <div id="screen_container" style="float: left;">
+    <div>
+      <canvas id="screen" width="800" height="800"></canvas>
+      <br /> Drag to rotate.
+    </div>
+  </div>
+  <div style="position: relative; float: left;">
+    <div>
+      Keyframe: <select id='keyframeSelect'>
+      </select>
+    </div>
 
-	<div>
-		<button id="addKeyframe">Add Keyframe</button>
-		<button id="saveKeyframe">Save Keyframe</button>
-	</div>
-	<div>
-		<button id="revertKeyframe">Revert Keyframe</button>
-		<button id="removeKeyframe">Remove Keyframe</button>
-	</div>
-	<div>
-		<button id="resetKeyframes">Reset Keyframes</button>
-		<button id="animateButton">Animate</button>
-		<button id="stopButton">Stop</button>
-        <input type="checkbox" id="cycleOption">Cycle</checkbox>
-    
-	</div>
-	Interpolation method:
-	<select id='methodSelect'>
-		<option value="hermite">Piecewise Cubic</option>
-		<option value="linear">Piecewise Linear</option>
-		<option value="bezier">Bezier</option>
-	</select>
-	<script type="application/dart" src="main.dart"></script>
-	<script data-pub-inline src="packages/browser/dart.js"></script>
+    <table>
+      <tr>
+        <td align="right">
+          <button id="addKeyframe">Add Keyframe</button>
+        </td>
+        <td>
+          <button id="saveKeyframe">Save Keyframe</button>
+        </td>
+      </tr>
+      <tr>
+        <td align="right">
+          <button id="revertKeyframe">Revert Keyframe</button>
+        </td>
+        <td>
+          <button id="removeKeyframe">Remove Keyframe</button>
+        </td>
+      </tr>
+
+      <tr>
+        <td align="right">
+          <button id="animateButton">Animate</button>
+
+        </td>
+        <td>
+          <button id="stopButton">Stop</button>
+
+        </td>
+      </tr>
+
+
+      <tr>
+        <td align="right">
+          <button id="resetKeyframes">Reset Keyframes</button>
+        </td>
+        <td><input type="checkbox" id="cycleOption">Cycle</checkbox></td>
+      </tr>
+      <tr>
+        <td colspan="2">Interpolation method: <select
+          id='methodSelect'>
+            <option value="hermite">Piecewise Cubic</option>
+            <option value="linear">Piecewise Linear</option>
+            <option value="bezier">Bezier</option>
+        </select>
+        </td>
+      </tr>
+    </table>
+
+  </div>
+  <script type="application/dart" src="main.dart"></script>
+  <script data-pub-inline src="packages/browser/dart.js"></script>
 </body>
 </html>
