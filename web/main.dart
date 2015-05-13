@@ -27,7 +27,7 @@ class Renderer {
   int _aBackgroundVertexPosition;
   webgl.UniformLocation _backgroundUCubeSampler;
   webgl.UniformLocation _backgroundUPMatrix;
-  webgl.UniformLocation _backgroundUMVMatrix;
+  webgl.UniformLocation _backgroundUIMVMatrix;
 
   webgl.UniformLocation _uPMatrix;
   webgl.UniformLocation _uMVMatrix;
@@ -55,6 +55,42 @@ class Renderer {
   static const ROTATION_POWER_START = 3.0;
   static const ROTATION_POWER = 1.002;
   List<Multivector> _keyframes;
+
+  webgl.UniformLocation _uDiffuseLight;
+  webgl.UniformLocation _uReflectedLight;
+  webgl.UniformLocation _uTransmittedLight;
+  webgl.UniformLocation _uRefractiveIndex;
+  double _refractiveIndex;
+  set refractiveIndex(double val) {
+    _refractiveIndex = val;
+    _gl.useProgram(_shaderProgram);
+    _gl.uniform1f(_uRefractiveIndex, _refractiveIndex);
+  }
+  get refractiveIndex => _refractiveIndex;
+
+  double _transmittedLight;
+  set transmittedLight(double val) {
+    _transmittedLight = val;
+    _gl.useProgram(_shaderProgram);
+    _gl.uniform1f(_uTransmittedLight, _transmittedLight);
+  }
+  get transmittedLight => _transmittedLight;
+
+  double _diffuseLight;
+  set diffuseLight(double val) {
+    _diffuseLight = val;
+    _gl.useProgram(_shaderProgram);
+    _gl.uniform1f(_uDiffuseLight, _diffuseLight);
+  }
+  get diffuseLight => _diffuseLight;
+
+  double _reflectedLight;
+  set reflectedLight(double val) {
+    _reflectedLight = val;
+    _gl.useProgram(_shaderProgram);
+    _gl.uniform1f(_uReflectedLight, _reflectedLight);
+  }
+  get reflectedLight => _reflectedLight;
 
   void resetKeyframes() {
     stopAnimation();
@@ -196,20 +232,7 @@ class Renderer {
     _initShaders();
     _needUpdate = false;
 
-    HttpRequest.getString("models/bunny.json").then((String responseText) {
-      Map data = JSON.decode(responseText);
-
-      List<int> indexData = new List<int>();
-      List<List<List<double>>> vertexData = new List<List<List<double>>>();
-      for (var objectIndices in data["indices"]) {
-        indexData.addAll(objectIndices);
-      }
-      for (int i = 0; i < data["vertices"].length; i++) {
-        vertexData.add([data["vertices"][i], data["normals"][i]]);
-      }
-      _setupModel(vertexData, indexData);
-      _needUpdate = true;
-    });
+    _loadModel("models/bunny.json");
 
     _setupTextures();
 
@@ -221,14 +244,33 @@ class Renderer {
     _gl.cullFace(webgl.RenderingContext.BACK);
   }
 
+  void _loadModel(String filename) {
+    HttpRequest.getString(filename).then((String responseText) {
+      Map data = JSON.decode(responseText);
+
+      List<int> indexData = new List<int>();
+      List<List<List<double>>> vertexData = new List<List<List<double>>>();
+      for (var objectIndices in data["indices"]) {
+        indexData.addAll(objectIndices);
+      }
+      for (int i = 0; i < data["vertices"].length; i++) {
+        vertexData
+            .add([data["vertices"][i], data["normals"][i].map((x) => -x)]);
+      }
+      _setupModel(vertexData, indexData);
+
+      _needUpdate = true;
+    });
+  }
+
   void _initShaders() {
     String bgvsSource = """
     attribute vec2 vPosition;
-    uniform mat4 uMVMatrix;
+    uniform mat4 uIMVMatrix;
     uniform mat4 uPMatrix;
     varying vec3 fPosition;
     void main(void) {
-      vec4 t =  uMVMatrix * vec4(vPosition,0.0,-1.0);
+      vec4 t =  uIMVMatrix * vec4(vPosition,-1.0,0.0);
       fPosition = t.xyz;
       gl_Position = vec4(vPosition,0.0,1.0);
     }
@@ -256,15 +298,26 @@ class Renderer {
     varying vec3 fColor;
     varying vec4 refracted;
     varying vec4 reflected;
+    varying float lambert;
+
+    uniform float uRefractiveIndex;
+
     void main(void) {
         fColor = vec3(1.0,1.0,1.0);
         
-        fNormal = uNMatrix * vNormal;
-        vec4 mvPos = uMVMatrix * vec4(vPosition,1.0);
-        gl_Position = uPMatrix * mvPos;
-        fPosition = gl_Position.xyz;
-        reflected = uIMVMatrix * vec4(reflect(-fPosition,fNormal),0.0);
-        refracted = uIMVMatrix * vec4(fPosition,-1.0);
+        vec3 normal_eye = normalize(uNMatrix * vNormal);
+        fNormal = normal_eye;
+
+        vec3 position_eye = vec3(uMVMatrix * vec4(vPosition,1.0));
+        gl_Position = uPMatrix * vec4(position_eye,1.0);
+        fPosition = position_eye;
+        reflected = uIMVMatrix * vec4(reflect(position_eye,normal_eye),0.0);
+
+        vec3 t = refract (position_eye.xyz, normal_eye, 1.0 / uRefractiveIndex);
+        refracted = uIMVMatrix * vec4 (t, 0.0);
+
+        //refracted = uIMVMatrix * vec4(fPosition,-1.0);
+        lambert = dot(fNormal, -position_eye);
     }
     """;
 
@@ -275,17 +328,21 @@ class Renderer {
     varying vec3 fColor;
     varying vec4 refracted;
     varying vec4 reflected;
+    varying float lambert;
     uniform samplerCube uSampler;
+    uniform float uDiffuseLight;
+    uniform float uReflectedLight;
+    uniform float uTransmittedLight;
 
     void main(void) {
         float attenuation = 0.0;
-        attenuation += max(0.0, dot(fNormal, -fPosition));
-        vec3 color = 0.1 * fColor;
+        attenuation += max(0.0, lambert);
+        vec3 color = attenuation * uDiffuseLight * fColor;
         // Reflected light.
-        color += 0.5 * textureCube(uSampler, reflected.xyz).rgb;
+        color += uReflectedLight * textureCube(uSampler, reflected.xyz).rgb;
         // Transmitted light.
-        color += 0.4 * textureCube(uSampler, refracted.xyz).rgb;
-        gl_FragColor = vec4(color * attenuation,1.0);
+        color += uTransmittedLight * textureCube(uSampler, refracted.xyz).rgb;
+        gl_FragColor = vec4(color,1.0);
     }
     """;
 
@@ -375,10 +432,17 @@ class Renderer {
     _uMVMatrix = _gl.getUniformLocation(_shaderProgram, "uMVMatrix");
     _uIMVMatrix = _gl.getUniformLocation(_shaderProgram, "uIMVMatrix");
     _uNMatrix = _gl.getUniformLocation(_shaderProgram, "uNMatrix");
+    _uDiffuseLight = _gl.getUniformLocation(_shaderProgram, "uDiffuseLight");
+    _uReflectedLight = _gl.getUniformLocation(_shaderProgram, "uReflectedLight");
+    _uTransmittedLight =
+        _gl.getUniformLocation(_shaderProgram, "uTransmittedLight");
+    _uRefractiveIndex =
+        _gl.getUniformLocation(_shaderProgram, "uRefractiveIndex");
+
     _backgroundUPMatrix =
         _gl.getUniformLocation(_backgroundShaderProgram, "uPMatrix");
-    _backgroundUMVMatrix =
-        _gl.getUniformLocation(_backgroundShaderProgram, "uMVMatrix");
+    _backgroundUIMVMatrix =
+        _gl.getUniformLocation(_backgroundShaderProgram, "uIMVMatrix");
   }
 
   void _setMatrixUniforms() {
@@ -410,7 +474,7 @@ class Renderer {
 
     _gl.useProgram(_backgroundShaderProgram);
     _gl.uniformMatrix4fv(_backgroundUPMatrix, false, perspectiveList);
-    _gl.uniformMatrix4fv(_backgroundUMVMatrix, false, inverseModelviewList);
+    _gl.uniformMatrix4fv(_backgroundUIMVMatrix, false, inverseModelviewList);
   }
 
   void _setupTextures() {
@@ -484,6 +548,7 @@ class Renderer {
 
     _vertexCount = indexData.length;
 
+    /* Compute the center of the model. */
     _center = new Vector3(0.0, 0.0, 0.0);
     for (int i = 0; i < vertexes.length; i++) {
       Vector3 p =
@@ -500,14 +565,15 @@ class Renderer {
       buffer.add(0.0);
     }
     _center /= vertexes.length.toDouble();
+
+    /* The scale of the model is the half the average distance to the center. */
     _scale = 0.0;
     for (int i = 0; i < vertexes.length; i++) {
       Vector3 p =
           new Vector3.array(vertexes[i][0].map((x) => x.toDouble()).toList());
       _scale += (p - _center).normalizeLength();
     }
-    _scale /= vertexes.length.toDouble();
-    _scale /= 2.0;
+    _scale /= vertexes.length.toDouble() * 2.0;
 
     _gl.useProgram(_shaderProgram);
     _gl.bindBuffer(webgl.RenderingContext.ARRAY_BUFFER, _vertexBuffer);
@@ -524,6 +590,7 @@ class Renderer {
 
     _gl.useProgram(_backgroundShaderProgram);
 
+    /* The background model is just a screen-filling quad. */
     _backgroundVertexCount = 6;
     List<double> backgroundBuffer = [
       //
@@ -591,7 +658,6 @@ class Renderer {
     _mvMatrix = view * model;
 
     _setMatrixUniforms();
-    /* Render the model. */
 
     /* Render the background. */
     _gl.disable(webgl.RenderingContext.DEPTH_TEST);
@@ -601,11 +667,10 @@ class Renderer {
         webgl.RenderingContext.ARRAY_BUFFER, _backgroundVertexBuffer);
     _gl.vertexAttribPointer(_aBackgroundVertexPosition, 2,
         webgl.RenderingContext.FLOAT, false, 2 * 4, 0);
-
     _gl.activeTexture(webgl.TEXTURE0);
-
     _gl.drawArrays(webgl.RenderingContext.TRIANGLES, 0, _backgroundVertexCount);
 
+    /* Render the model. */
     _gl.enable(webgl.RenderingContext.DEPTH_TEST);
     _gl.useProgram(_shaderProgram);
     _gl.bindBuffer(webgl.RenderingContext.ARRAY_BUFFER, _vertexBuffer);
@@ -613,11 +678,7 @@ class Renderer {
         false, stride, positionOffset);
     _gl.vertexAttribPointer(_aVertexNormal, 3, webgl.RenderingContext.FLOAT,
         false, stride, normalOffset);
-
     _gl.bindBuffer(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _indexBuffer);
-
-    //_gl.activeTexture(0);
-
     _gl.drawElements(webgl.RenderingContext.TRIANGLES, _vertexCount,
         webgl.RenderingContext.UNSIGNED_SHORT, 0);
   }
@@ -643,6 +704,7 @@ class Renderer {
     double tk = t * (keyframes.length - 1) - interval;
     return interpolateBetween(interval, tk).versorExp();
   }
+
   static Multivector _interpolateHermite(
       List<Multivector> keyframes, double t) {
     // The tangent.
@@ -696,6 +758,14 @@ class Renderer {
 
   String _method;
   set method(String val) => _method = val;
+
+  String _modelFilename;
+  set model(String filename) {
+    if (filename != _modelFilename) {
+      _modelFilename = filename;
+      _loadModel(filename);
+    }
+  }
 
   void _gameloop(Timer timer) {
     if (!_ready) {
@@ -861,6 +931,45 @@ void main() {
     methodSelect.value = 'hermite';
     renderer.method = methodSelect.value;
   }
+  {
+    SelectElement modelSelect = querySelector('#modelSelect') as SelectElement;
+    modelSelect.onChange.listen((Event onData) {
+      renderer.model = modelSelect.value;
+    });
+    modelSelect.value = 'models/bunny.json';
+    renderer.model = modelSelect.value;
+  }
+  void changeValue(String elementName, Function valueChanger, Function getValue,
+      double defaultValue) {
+    InputElement valueElement = querySelector(elementName) as InputElement;
+    valueElement.onChange.listen((Event onData) {
+      try {
+        valueChanger(renderer, double.parse(valueElement.value));
+        renderer.update();
+      } catch (e) {}
+    });
+    valueElement.onMouseWheel.listen((WheelEvent e) {
+      const increment = 1.1;
+      const scale = 200.0;
+      double v = getValue(renderer);
+      v *= pow(increment, -e.deltaY / scale);
+      valueChanger(renderer, v);
+      valueElement.value = v.toString();
+      renderer.update();
+    });
+
+    valueElement.value = defaultValue.toString();
+    valueChanger(renderer, defaultValue);
+  }
+
+  changeValue("#refractiveIndex", (r, v) => r.refractiveIndex = v,
+      (r) => r.refractiveIndex, 1.2);
+  changeValue("#transmittedLight", (r, v) => r.transmittedLight = v,
+      (r) => r.transmittedLight, 0.6);
+  changeValue("#reflectedLight", (r, v) => r.reflectedLight = v,
+      (r) => r.reflectedLight, 0.5);
+  changeValue("#diffuseLight", (r, v) => r.diffuseLight = v,
+      (r) => r.diffuseLight, 0.1);
 
   querySelector('#animateButton').onClick.listen((MouseEvent e) {
     renderer.startAnimation();
