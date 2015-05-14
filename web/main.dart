@@ -227,7 +227,7 @@ class Renderer {
       }
     });
 
-    _gl = canvas.getContext("experimental-webgl");
+    _gl = canvas.getContext("webgl");
 
     _initShaders();
     _needUpdate = false;
@@ -313,10 +313,9 @@ class Renderer {
         fPosition = position_eye;
         reflected = uIMVMatrix * vec4(reflect(position_eye,normal_eye),0.0);
 
-        vec3 t = refract (position_eye.xyz, normal_eye, 1.0 / uRefractiveIndex);
-        refracted = uIMVMatrix * vec4 (t, 0.0);
+        vec3 t = refract(position_eye.xyz, normal_eye, 1.0 / uRefractiveIndex);
+        refracted = uIMVMatrix * vec4 (normalize(t), 0.0);
 
-        //refracted = uIMVMatrix * vec4(fPosition,-1.0);
         lambert = dot(fNormal, -position_eye);
     }
     """;
@@ -433,7 +432,8 @@ class Renderer {
     _uIMVMatrix = _gl.getUniformLocation(_shaderProgram, "uIMVMatrix");
     _uNMatrix = _gl.getUniformLocation(_shaderProgram, "uNMatrix");
     _uDiffuseLight = _gl.getUniformLocation(_shaderProgram, "uDiffuseLight");
-    _uReflectedLight = _gl.getUniformLocation(_shaderProgram, "uReflectedLight");
+    _uReflectedLight =
+        _gl.getUniformLocation(_shaderProgram, "uReflectedLight");
     _uTransmittedLight =
         _gl.getUniformLocation(_shaderProgram, "uTransmittedLight");
     _uRefractiveIndex =
@@ -590,27 +590,18 @@ class Renderer {
 
     _gl.useProgram(_backgroundShaderProgram);
 
-    /* The background model is just a screen-filling quad. */
-    _backgroundVertexCount = 6;
+    /* The background model is just an oversized screen-filling triangle. */
+    _backgroundVertexCount = 3;
     List<double> backgroundBuffer = [
-      //
+      // Lower left.
       -1.0,
       -1.0,
-      //
-      1.0,
+      // Lower right.
+      3.0,
       -1.0,
-      //
+      // Upper Left.
       -1.0,
-      1.0,
-      //
-      -1.0,
-      1.0,
-      //
-      1.0,
-      -1.0,
-      //
-      1.0,
-      1.0
+      3.0
     ];
     _gl.bindBuffer(
         webgl.RenderingContext.ARRAY_BUFFER, _backgroundVertexBuffer);
