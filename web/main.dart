@@ -163,6 +163,9 @@ void main() {
   querySelector('#animateButton').onClick.listen((MouseEvent e) {
     renderer.startAnimation();
   });
+  querySelector('#explodeButton').onClick.listen((MouseEvent e) {
+    renderer.explode();
+  });
   querySelector('#stopButton').onClick.listen((MouseEvent e) {
     renderer.stopAnimation();
   });
@@ -219,15 +222,18 @@ class Renderer {
     varying vec4 reflected;
     varying float lambert;
 
+    uniform float uExplodeScale;
+
     uniform float uRefractiveIndex;
 
     void main(void) {
         fColor = vec3(1.0,1.0,1.0);
         
         vec3 normal_eye = normalize(uNMatrix * vNormal);
+        vec3 position = vPosition;
         fNormal = normal_eye;
 
-        vec3 position_eye = vec3(uMVMatrix * vec4(vPosition,1.0));
+        vec3 position_eye = vec3(uMVMatrix * vec4(position,1.0))  +  uExplodeScale * normalize(normal_eye);
         gl_Position = uPMatrix * vec4(position_eye,1.0);
         fPosition = position_eye;
         reflected = uIMVMatrix * vec4(reflect(position_eye,normal_eye),0.0);
@@ -320,7 +326,7 @@ class Renderer {
    * The number of vertices in the model.
    */
   int _modelVertexCount;
-  
+
   /**
    * The world coordinate center of the model as weighed by the vertexes.
    */
@@ -331,7 +337,7 @@ class Renderer {
   double _scale;
   /**
    * The starting point for a drag.
-   */ 
+   */
   Vector2 _startDrag;
   Multivector _rotation;
   double _rotationPower;
@@ -346,6 +352,27 @@ class Renderer {
 
   webgl.UniformLocation _uTransmittedLight;
   webgl.UniformLocation _uRefractiveIndex;
+
+  /**
+   * The number of frames into the explosion.
+   */
+  double _explodeProgress;
+  double _explodeScale;
+  /**
+   * The duration of the explosion in seconds.
+   */
+  static const double EXPLODE_LENGTH = 3.0;
+  static const double EXPLODE_SPEED = 0.01;
+  static const double EXPLODE_INCREMENT = 1.4;
+  webgl.UniformLocation _uExplodeScale;
+  /**
+   * Explode the model. Blame sixthgear for this feature.
+   */
+  void explode() {
+    _explodeProgress = 0.0;
+    _explodeScale = 0.0;
+  }
+
   Renderer(CanvasElement canvas) {
     _ready = false;
     _keyframes = new List<Multivector>();
@@ -417,7 +444,6 @@ class Renderer {
     _gl.cullFace(webgl.RenderingContext.BACK);
   }
 
-
   /**
    * The attenuation factor for the diffuse lighting component.
    */
@@ -440,7 +466,7 @@ class Renderer {
       _loadModel(filename);
     }
   }
-  
+
   /**
    * The attenuation factor for the amount of light reflected from the model.
    */
@@ -537,7 +563,7 @@ class Renderer {
     _rotation = new Multivector.one();
     update();
   }
-  
+
   /**
    * Set the current keyframe to the identity and reset the current model transform.
    */
@@ -604,7 +630,19 @@ class Renderer {
     if (!_ready) {
       return;
     }
-    if (_animationProgress != null) {
+    if (_explodeProgress != null) {
+      if (_explodeProgress < EXPLODE_LENGTH) {
+        _gl.useProgram(_modelShaderProgram);
+        _gl.uniform1f(_uExplodeScale, _explodeScale);
+        _render();
+        _explodeProgress += 1.0 / TICS_PER_SECOND;
+        _explodeScale += EXPLODE_SPEED *
+            pow(EXPLODE_INCREMENT, _explodeProgress / EXPLODE_LENGTH);
+      } else {
+        _explodeProgress = null;
+        _needUpdate = false;
+      }
+    } else if (_animationProgress != null) {
       while (cycleAnimation && _animationProgress >= _animationLength) {
         _animationProgress -= _animationLength;
       }
@@ -719,6 +757,9 @@ class Renderer {
         _gl.getAttribLocation(_modelShaderProgram, "vNormal");
     _gl.enableVertexAttribArray(_model_aVertexNormal);
 
+    _uExplodeScale =
+        _gl.getUniformLocation(_modelShaderProgram, "uExplodeScale");
+    _gl.uniform1f(_uExplodeScale, 0.0);
     _model_uPerspectiveMatrix =
         _gl.getUniformLocation(_modelShaderProgram, "uPMatrix");
     _model_uModelviewMatrix =
