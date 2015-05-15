@@ -230,4 +230,19 @@ class Multivector {
     out += out == "" ? "0" : "";
     return out;
   }
+  
+  Matrix4 fromVersor() {
+    Multivector q = this;
+    Multivector qinverse = q.inverse();
+    Matrix3 rot = new Matrix3.columns(
+        (q * new Multivector.basisVector(0) * qinverse).vector,
+        (q * new Multivector.basisVector(1) * qinverse).vector,
+        (q * new Multivector.basisVector(2) * qinverse).vector);
+
+    Matrix4 out = new Matrix4.identity();
+    out.setRotation(rot);
+    
+    return out;
+  }
+
 }
