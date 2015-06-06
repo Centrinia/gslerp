@@ -229,33 +229,33 @@ class ShaderObject {
       print(_gl.getProgramInfoLog(_program));
     }
   }
-  
-  Map<String,webgl.UniformLocation> get uniforms => _uniforms;
+
+  Map<String, webgl.UniformLocation> get uniforms => _uniforms;
   webgl.Program get program => _program;
-  
-  
+
+  webgl.Buffer _indexBuffer;
   webgl.Buffer _vertexBuffer;
   Map<String, Map> _attributes;
   Map<String, webgl.UniformLocation> _uniforms;
-  
+
   void createUniforms(List<String> uniformNames) {
     _gl.useProgram(_program);
 
-    _uniforms = new Map<String,webgl.UniformLocation>();
-    for(String uniformName in uniformNames) {
-    _uniforms[uniformName] =
-        _gl.getUniformLocation(_program, uniformName);
+    _uniforms = new Map<String, webgl.UniformLocation>();
+    for (String uniformName in uniformNames) {
+      _uniforms[uniformName] = _gl.getUniformLocation(_program, uniformName);
     }
   }
 
   void createVertexBuffer(Map<String, Map> attributes) {
     _gl.useProgram(_program);
-    
+
+    _indexBuffer = _gl.createBuffer();
     _vertexBuffer = _gl.createBuffer();
     _attributes = new Map<String, Map>();
     for (String attributeName in attributes.keys) {
       int index = _gl.getAttribLocation(_program, attributeName);
-     _gl.enableVertexAttribArray(index);
+      _gl.enableVertexAttribArray(index);
 
       Map attribute = new Map();
       attribute["index"] = index;
@@ -266,7 +266,7 @@ class ShaderObject {
   }
 
   set stride(int stride) => _stride = stride;
-  
+
   void bindBuffer() {
     _gl.useProgram(_program);
 
@@ -275,23 +275,30 @@ class ShaderObject {
     for (String attributeName in _attributes.keys) {
       Map attribute = _attributes[attributeName];
       _gl.vertexAttribPointer(attribute["index"], attribute["size"],
-          webgl.RenderingContext.FLOAT, false, _stride*4, attribute["offset"]);
+          webgl.RenderingContext.FLOAT, false, _stride * 4,
+          attribute["offset"]);
     }
 
+    _gl.bindBuffer(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _indexBuffer);
   }
-  
-  void loadData(List<double> data) {
+
+  void loadData(List<double> data, List<int> indexes) {
     _gl.useProgram(_program);
 
     _gl.bufferDataTyped(webgl.RenderingContext.ARRAY_BUFFER,
         new Float32List.fromList(data), webgl.RenderingContext.STATIC_DRAW);
-    _count = data.length ~/ _stride;
+
+    _gl.bufferDataTyped(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER,
+        new Int16List.fromList(indexes), webgl.RenderingContext.STATIC_DRAW);
+
+    _count = indexes.length;
   }
-  
+
   void render() {
     _gl.useProgram(_program);
 
-    _gl.drawArrays(webgl.RenderingContext.TRIANGLES, 0, _count);
+    _gl.drawElements(webgl.RenderingContext.TRIANGLES, _count,
+        webgl.RenderingContext.UNSIGNED_SHORT, 0);
   }
 }
 
@@ -410,8 +417,6 @@ class Renderer {
   int _model_aVertexPosition;
   int _model_aVertexNormal;
 
-  
-  
   webgl.UniformLocation _model_uPerspectiveMatrix;
   webgl.UniformLocation _model_uModelviewMatrix;
   webgl.UniformLocation _model_uInverseModelviewMatrix;
@@ -421,7 +426,6 @@ class Renderer {
 
   webgl.Buffer _modelVertexBuffer;
   webgl.Buffer _modelIndexBuffer;
-
 
   /**
    * The number of vertices in the model.
@@ -749,19 +753,12 @@ class Renderer {
         BACKGROUND_VERTEX_SHADER, BACKGROUND_FRAGMENT_SHADER);
 
     _backgroundShader.stride = 2;
-    _backgroundShader.createVertexBuffer({
-      "vPosition": {
-        "size": 2,
-        "offset": 0
-      }
-    });
+    _backgroundShader
+        .createVertexBuffer({"vPosition": {"size": 2, "offset": 0}});
 
     _backgroundShader.bindBuffer();
 
-    _backgroundShader.createUniforms(
-        ["uPMatrix","uIMVMatrix","uSampler"]
-    );
-    
+    _backgroundShader.createUniforms(["uPMatrix", "uIMVMatrix", "uSampler"]);
 
     /* vertex shader compilation */
     webgl.Shader vs = _gl.createShader(webgl.RenderingContext.VERTEX_SHADER);
@@ -824,9 +821,6 @@ class Renderer {
         _gl.getUniformLocation(_modelShaderProgram, "uTransmittedLight");
     _uRefractiveIndex =
         _gl.getUniformLocation(_modelShaderProgram, "uRefractiveIndex");
-
-
-    
   }
 
   void _loadModel(String filename) {
@@ -979,10 +973,10 @@ class Renderer {
     _gl.bufferDataTyped(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER,
         new Int16List.fromList(indexData), webgl.RenderingContext.STATIC_DRAW);
 
-
     /* The background model is just an oversized screen-filling triangle. */
 
-    List<double> backgroundBuffer = [
+    _backgroundShader.bindBuffer();
+    _backgroundShader.loadData([
       // Lower left.
       -1.0,
       -1.0,
@@ -991,10 +985,14 @@ class Renderer {
       -1.0,
       // Upper Left.
       -1.0,
-      3.0
-    ];
-    _backgroundShader.bindBuffer();
-    _backgroundShader.loadData(backgroundBuffer);
+      3.0,
+      
+      //
+      1.0,-1.0,
+          -1.0,1.0,
+              1.0,1.0
+                    
+    ], [0, 3, 4,4,3,5]);
   }
   /**
    * Load the cubemap.
