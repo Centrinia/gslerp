@@ -268,6 +268,7 @@ class ShaderObject {
   set stride(int stride) => _stride = stride;
 
   void bindBuffer() {
+    const COMPONENT_BYTES = 4;
     _gl.useProgram(_program);
 
     /* The background model is just an oversized screen-filling triangle. */
@@ -275,8 +276,8 @@ class ShaderObject {
     for (String attributeName in _attributes.keys) {
       Map attribute = _attributes[attributeName];
       _gl.vertexAttribPointer(attribute["index"], attribute["size"],
-          webgl.RenderingContext.FLOAT, false, _stride * 4,
-          attribute["offset"]);
+          webgl.RenderingContext.FLOAT, false, _stride * COMPONENT_BYTES,
+          attribute["offset"] * COMPONENT_BYTES);
     }
 
     _gl.bindBuffer(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _indexBuffer);
@@ -411,26 +412,10 @@ class Renderer {
   int _viewportWidth;
   int _viewportHeight;
   bool _ready;
-  webgl.Program _modelShaderProgram;
 
   webgl.RenderingContext _gl;
-  int _model_aVertexPosition;
-  int _model_aVertexNormal;
 
-  webgl.UniformLocation _model_uPerspectiveMatrix;
-  webgl.UniformLocation _model_uModelviewMatrix;
-  webgl.UniformLocation _model_uInverseModelviewMatrix;
-
-  webgl.UniformLocation _model_uNormalMatrix;
   bool _needUpdate;
-
-  webgl.Buffer _modelVertexBuffer;
-  webgl.Buffer _modelIndexBuffer;
-
-  /**
-   * The number of vertices in the model.
-   */
-  int _modelVertexCount;
 
   /**
    * The world coordinate center of the model as weighed by the vertexes.
@@ -451,12 +436,6 @@ class Renderer {
   double _animationLength;
 
   String _interpolationMethod;
-
-  webgl.UniformLocation _uDiffuseLight;
-  webgl.UniformLocation _uReflectedLight;
-
-  webgl.UniformLocation _uTransmittedLight;
-  webgl.UniformLocation _uRefractiveIndex;
 
   Renderer(CanvasElement canvas) {
     _ready = false;
@@ -536,8 +515,8 @@ class Renderer {
   get diffuseLight => _diffuseLight;
   set diffuseLight(double val) {
     _diffuseLight = val;
-    _gl.useProgram(_modelShaderProgram);
-    _gl.uniform1f(_uDiffuseLight, _diffuseLight);
+    _gl.useProgram(_modelShader.program);
+    _gl.uniform1f(_modelShader.uniforms["uDiffuseLight"], _diffuseLight);
   }
   set interpolationMethod(String val) => _interpolationMethod = val;
 
@@ -559,8 +538,8 @@ class Renderer {
   get reflectedLight => _reflectedLight;
   set reflectedLight(double val) {
     _reflectedLight = val;
-    _gl.useProgram(_modelShaderProgram);
-    _gl.uniform1f(_uReflectedLight, _reflectedLight);
+    _gl.useProgram(_modelShader.program);
+    _gl.uniform1f(_modelShader.uniforms["uReflectedLight"], _reflectedLight);
   }
 
   /**
@@ -570,8 +549,8 @@ class Renderer {
   get refractiveIndex => _refractiveIndex;
   set refractiveIndex(double val) {
     _refractiveIndex = val;
-    _gl.useProgram(_modelShaderProgram);
-    _gl.uniform1f(_uRefractiveIndex, _refractiveIndex);
+    _gl.useProgram(_modelShader.program);
+    _gl.uniform1f(_modelShader.uniforms["uRefractiveIndex"], _refractiveIndex);
   }
   /**
    * The attenuation factor for light that passes through the model.
@@ -580,8 +559,9 @@ class Renderer {
   get transmittedLight => _transmittedLight;
   set transmittedLight(double val) {
     _transmittedLight = val;
-    _gl.useProgram(_modelShaderProgram);
-    _gl.uniform1f(_uTransmittedLight, _transmittedLight);
+    _gl.useProgram(_modelShader.program);
+    _gl.uniform1f(
+        _modelShader.uniforms["uTransmittedLight"], _transmittedLight);
   }
   /**
    * Append the current keyframe to the list.
@@ -742,6 +722,7 @@ class Renderer {
   }
 
   ShaderObject _backgroundShader;
+  ShaderObject _modelShader;
 
   /**
    * Set and initialize the shaders.
@@ -760,67 +741,27 @@ class Renderer {
 
     _backgroundShader.createUniforms(["uPMatrix", "uIMVMatrix", "uSampler"]);
 
-    /* vertex shader compilation */
-    webgl.Shader vs = _gl.createShader(webgl.RenderingContext.VERTEX_SHADER);
-    _gl.shaderSource(vs, MODEL_VERTEX_SHADER);
-    _gl.compileShader(vs);
+    _modelShader = new ShaderObject(_gl);
+    _modelShader.loadShaders(MODEL_VERTEX_SHADER, MODEL_FRAGMENT_SHADER);
+    _modelShader.stride = 4 * 2;
 
-    /* fragment shader compilation */
-    webgl.Shader fs = _gl.createShader(webgl.RenderingContext.FRAGMENT_SHADER);
-    _gl.shaderSource(fs, MODEL_FRAGMENT_SHADER);
-    _gl.compileShader(fs);
+    _modelShader.createVertexBuffer({
+      //
+      "vPosition": {"size": 4, "offset": 0},
+      //
+      "vNormal": {"size": 3, "offset": 4}
+    });
 
-    /* attach shaders to a WebGL program */
-    _modelShaderProgram = _gl.createProgram();
-    _gl.attachShader(_modelShaderProgram, vs);
-    _gl.attachShader(_modelShaderProgram, fs);
-    _gl.linkProgram(_modelShaderProgram);
-    _gl.useProgram(_modelShaderProgram);
-
-    /**
-     * Check if shaders were compiled properly. This is probably the most painful part
-     * since there's no way to "debug" shader compilation
-     */
-    if (!_gl.getShaderParameter(vs, webgl.RenderingContext.COMPILE_STATUS)) {
-      print(_gl.getShaderInfoLog(vs));
-    }
-
-    if (!_gl.getShaderParameter(fs, webgl.RenderingContext.COMPILE_STATUS)) {
-      print(_gl.getShaderInfoLog(fs));
-    }
-
-    if (!_gl.getProgramParameter(
-        _modelShaderProgram, webgl.RenderingContext.LINK_STATUS)) {
-      print(_gl.getProgramInfoLog(_modelShaderProgram));
-    }
-
-    _modelVertexBuffer = _gl.createBuffer();
-    _modelIndexBuffer = _gl.createBuffer();
-
-    _model_aVertexPosition =
-        _gl.getAttribLocation(_modelShaderProgram, "vPosition");
-    _gl.enableVertexAttribArray(_model_aVertexPosition);
-
-    _model_aVertexNormal =
-        _gl.getAttribLocation(_modelShaderProgram, "vNormal");
-    _gl.enableVertexAttribArray(_model_aVertexNormal);
-
-    _model_uPerspectiveMatrix =
-        _gl.getUniformLocation(_modelShaderProgram, "uPMatrix");
-    _model_uModelviewMatrix =
-        _gl.getUniformLocation(_modelShaderProgram, "uMVMatrix");
-    _model_uInverseModelviewMatrix =
-        _gl.getUniformLocation(_modelShaderProgram, "uIMVMatrix");
-    _model_uNormalMatrix =
-        _gl.getUniformLocation(_modelShaderProgram, "uNMatrix");
-    _uDiffuseLight =
-        _gl.getUniformLocation(_modelShaderProgram, "uDiffuseLight");
-    _uReflectedLight =
-        _gl.getUniformLocation(_modelShaderProgram, "uReflectedLight");
-    _uTransmittedLight =
-        _gl.getUniformLocation(_modelShaderProgram, "uTransmittedLight");
-    _uRefractiveIndex =
-        _gl.getUniformLocation(_modelShaderProgram, "uRefractiveIndex");
+    _modelShader.createUniforms([
+      "uPMatrix",
+      "uMVMatrix",
+      "uIMVMatrix",
+      "uNMatrix",
+      "uDiffuseLight",
+      "uReflectedLight",
+      "uTransmittedLight",
+      "uRefractiveIndex"
+    ]);
   }
 
   void _loadModel(String filename) {
@@ -877,17 +818,10 @@ class Renderer {
     _backgroundShader.render();
 
     /* Render the model. */
+
     _gl.enable(webgl.RenderingContext.DEPTH_TEST);
-    _gl.useProgram(_modelShaderProgram);
-    _gl.bindBuffer(webgl.RenderingContext.ARRAY_BUFFER, _modelVertexBuffer);
-    _gl.vertexAttribPointer(_model_aVertexPosition, 3,
-        webgl.RenderingContext.FLOAT, false, STRIDE, POSITION_OFFSET);
-    _gl.vertexAttribPointer(_model_aVertexNormal, 3,
-        webgl.RenderingContext.FLOAT, false, STRIDE, NORMAL_OFFSET);
-    _gl.bindBuffer(
-        webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _modelIndexBuffer);
-    _gl.drawElements(webgl.RenderingContext.TRIANGLES, _modelVertexCount,
-        webgl.RenderingContext.UNSIGNED_SHORT, 0);
+    _modelShader.bindBuffer();
+    _modelShader.render();
   }
 
   /**
@@ -914,12 +848,14 @@ class Renderer {
     nMatrix *= pow(det, 1.0 / 3.0);
     nMatrix.copyIntoArray(normalList);
 
-    _gl.useProgram(_modelShaderProgram);
-    _gl.uniformMatrix4fv(_model_uPerspectiveMatrix, false, perspectiveList);
-    _gl.uniformMatrix4fv(_model_uModelviewMatrix, false, modelviewList);
+    _gl.useProgram(_modelShader.program);
     _gl.uniformMatrix4fv(
-        _model_uInverseModelviewMatrix, false, inverseModelviewList);
-    _gl.uniformMatrix3fv(_model_uNormalMatrix, false, normalList);
+        _modelShader.uniforms["uPMatrix"], false, perspectiveList);
+    _gl.uniformMatrix4fv(
+        _modelShader.uniforms["uMVMatrix"], false, modelviewList);
+    _gl.uniformMatrix4fv(
+        _modelShader.uniforms["uIMVMatrix"], false, inverseModelviewList);
+    _gl.uniformMatrix3fv(_modelShader.uniforms["uNMatrix"], false, normalList);
 
     _gl.useProgram(_backgroundShader.program);
     _gl.uniformMatrix4fv(
@@ -929,8 +865,6 @@ class Renderer {
   }
   void _setupModel(List<List<List<double>>> vertexes, List<int> indexData) {
     List<double> buffer = new List<double>();
-
-    _modelVertexCount = indexData.length;
 
     /* Compute the center of the model. */
     _center = new Vector3(0.0, 0.0, 0.0);
@@ -959,19 +893,8 @@ class Renderer {
     }
     _scale /= vertexes.length.toDouble() * 2.0;
 
-    _gl.useProgram(_modelShaderProgram);
-    _gl.bindBuffer(webgl.RenderingContext.ARRAY_BUFFER, _modelVertexBuffer);
-    _gl.vertexAttribPointer(_model_aVertexPosition, 3,
-        webgl.RenderingContext.FLOAT, false, STRIDE, POSITION_OFFSET);
-    _gl.vertexAttribPointer(_model_aVertexNormal, 3,
-        webgl.RenderingContext.FLOAT, false, STRIDE, NORMAL_OFFSET);
-    _gl.bufferDataTyped(webgl.RenderingContext.ARRAY_BUFFER,
-        new Float32List.fromList(buffer), webgl.RenderingContext.STATIC_DRAW);
-
-    _gl.bindBuffer(
-        webgl.RenderingContext.ELEMENT_ARRAY_BUFFER, _modelIndexBuffer);
-    _gl.bufferDataTyped(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER,
-        new Int16List.fromList(indexData), webgl.RenderingContext.STATIC_DRAW);
+    _modelShader.bindBuffer();
+    _modelShader.loadData(buffer, indexData);
 
     /* The background model is just an oversized screen-filling triangle. */
 
@@ -986,13 +909,15 @@ class Renderer {
       // Upper Left.
       -1.0,
       3.0,
-      
+
       //
-      1.0,-1.0,
-          -1.0,1.0,
-              1.0,1.0
-                    
-    ], [0, 3, 4,4,3,5]);
+      1.0,
+      -1.0,
+      -1.0,
+      1.0,
+      1.0,
+      1.0
+    ], [0, 3, 4, 4, 3, 5]);
   }
   /**
    * Load the cubemap.
@@ -1027,10 +952,10 @@ class Renderer {
 
     _gl.activeTexture(webgl.TEXTURE0);
 
-    _gl.useProgram(_modelShaderProgram);
+    _gl.useProgram(_modelShader.program);
     _texture = _gl.createTexture();
     _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
-    _gl.uniform1i(_gl.getUniformLocation(_modelShaderProgram, "uSampler"), 0);
+    _gl.uniform1i(_gl.getUniformLocation(_modelShader.program, "uSampler"), 0);
     _gl.texParameteri(
         webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
     _gl.texParameteri(
