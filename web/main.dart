@@ -153,18 +153,15 @@ void main() {
     changeValue("#refractiveIndex", (r, v) => r.refractiveIndex = v,
         (r) => r.refractiveIndex, 1.2);
     changeValue("#transmittedLight", (r, v) => r.transmittedLight = v,
-        (r) => r.transmittedLight, 0.6);
+        (r) => r.transmittedLight, 0.0);
     changeValue("#reflectedLight", (r, v) => r.reflectedLight = v,
-        (r) => r.reflectedLight, 0.5);
+        (r) => r.reflectedLight, 1.0);
     changeValue("#diffuseLight", (r, v) => r.diffuseLight = v,
-        (r) => r.diffuseLight, 0.1);
+        (r) => r.diffuseLight, 0.0);
   }
 
   querySelector('#animateButton').onClick.listen((MouseEvent e) {
     renderer.startAnimation();
-  });
-  querySelector('#explodeButton').onClick.listen((MouseEvent e) {
-    renderer.explode();
   });
   querySelector('#stopButton').onClick.listen((MouseEvent e) {
     renderer.stopAnimation();
@@ -222,8 +219,6 @@ class Renderer {
     varying vec4 reflected;
     varying float lambert;
 
-    uniform float uExplodeScale;
-
     uniform float uRefractiveIndex;
 
     void main(void) {
@@ -233,7 +228,7 @@ class Renderer {
         vec3 position = vPosition;
         fNormal = normal_eye;
 
-        vec3 position_eye = vec3(uMVMatrix * vec4(position,1.0))  +  uExplodeScale * normalize(normal_eye);
+        vec3 position_eye = vec3(uMVMatrix * vec4(position,1.0));
         gl_Position = uPMatrix * vec4(position_eye,1.0);
         fPosition = position_eye;
         reflected = uIMVMatrix * vec4(reflect(position_eye,normal_eye),0.0);
@@ -276,7 +271,7 @@ class Renderer {
   static final CLEAR_COLOR = [0.0, 0.0, 0.0, 1.0];
   static const double TICS_PER_SECOND = 35.0;
   static const double NEAR_DISTANCE = 0.1;
-  static const double FAR_DISTANCE = 200.0;
+  static const double FAR_DISTANCE = 2.0;
 
   static const int DIMENSIONS = 4;
   static const int STRIDE = (DIMENSIONS * 4) * 2;
@@ -284,7 +279,7 @@ class Renderer {
   static const int POSITION_OFFSET = 0;
   static const int NORMAL_OFFSET = DIMENSIONS * 4;
 
-  static const ROTATION_POWER_START = 3.0;
+  static const ROTATION_POWER_START = 1.0;
   static const ROTATION_POWER_FACTOR = 1.002;
   Matrix4 _perspectiveMatrix;
   Matrix4 _modelviewMatrix;
@@ -353,26 +348,6 @@ class Renderer {
   webgl.UniformLocation _uTransmittedLight;
   webgl.UniformLocation _uRefractiveIndex;
 
-  /**
-   * The number of frames into the explosion.
-   */
-  double _explodeProgress;
-  double _explodeScale;
-  /**
-   * The duration of the explosion in seconds.
-   */
-  static const double EXPLODE_LENGTH = 3.0;
-  static const double EXPLODE_SPEED = 0.01;
-  static const double EXPLODE_INCREMENT = 1.4;
-  webgl.UniformLocation _uExplodeScale;
-  /**
-   * Explode the model. Blame sixthgear for this feature.
-   */
-  void explode() {
-    _explodeProgress = 0.0;
-    _explodeScale = 0.0;
-  }
-
   Renderer(CanvasElement canvas) {
     _ready = false;
     _keyframes = new List<Multivector>();
@@ -431,7 +406,7 @@ class Renderer {
     _initShaders();
     _needUpdate = false;
 
-    _loadModel("models/bunny.json");
+    //_loadModel("models/bunny.json");
 
     _setupTextures();
 
@@ -630,19 +605,7 @@ class Renderer {
     if (!_ready) {
       return;
     }
-    if (_explodeProgress != null) {
-      if (_explodeProgress < EXPLODE_LENGTH) {
-        _gl.useProgram(_modelShaderProgram);
-        _gl.uniform1f(_uExplodeScale, _explodeScale);
-        _render();
-        _explodeProgress += 1.0 / TICS_PER_SECOND;
-        _explodeScale += EXPLODE_SPEED *
-            pow(EXPLODE_INCREMENT, _explodeProgress / EXPLODE_LENGTH);
-      } else {
-        _explodeProgress = null;
-        _needUpdate = false;
-      }
-    } else if (_animationProgress != null) {
+    if (_animationProgress != null) {
       while (cycleAnimation && _animationProgress >= _animationLength) {
         _animationProgress -= _animationLength;
       }
@@ -757,9 +720,6 @@ class Renderer {
         _gl.getAttribLocation(_modelShaderProgram, "vNormal");
     _gl.enableVertexAttribArray(_model_aVertexNormal);
 
-    _uExplodeScale =
-        _gl.getUniformLocation(_modelShaderProgram, "uExplodeScale");
-    _gl.uniform1f(_uExplodeScale, 0.0);
     _model_uPerspectiveMatrix =
         _gl.getUniformLocation(_modelShaderProgram, "uPMatrix");
     _model_uModelviewMatrix =
@@ -865,6 +825,7 @@ class Renderer {
 
     Float32List inverseModelviewList = new Float32List(16);
 
+    //Matrix4 t = new Matrix4.copy(_perspectiveMatrix * _modelviewMatrix);
     Matrix4 t = new Matrix4.copy(_modelviewMatrix);
     t.invert();
     t.copyIntoArray(inverseModelviewList);
