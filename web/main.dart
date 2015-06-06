@@ -182,6 +182,119 @@ int binomialCoefficient(int n, int k) {
   return out;
 }
 
+class ShaderObject {
+  webgl.Program _program;
+  webgl.Shader _vertexShader;
+  webgl.Shader _fragmentShader;
+
+  webgl.RenderingContext _gl;
+  int _count;
+  int _stride;
+
+  ShaderObject(webgl.RenderingContext gl) {
+    _gl = gl;
+  }
+
+  void loadShaders(String _vertexShaderSource, String _fragmentShaderSource) {
+    _vertexShader = _gl.createShader(webgl.RenderingContext.VERTEX_SHADER);
+    _gl.shaderSource(_vertexShader, _vertexShaderSource);
+    _gl.compileShader(_vertexShader);
+
+    /**
+     * Check if shaders were compiled properly. This is probably the most painful part
+     * since there's no way to "debug" shader compilation
+     */
+    if (!_gl.getShaderParameter(
+        _vertexShader, webgl.RenderingContext.COMPILE_STATUS)) {
+      print(_gl.getShaderInfoLog(_vertexShader));
+    }
+
+    _fragmentShader = _gl.createShader(webgl.RenderingContext.FRAGMENT_SHADER);
+    _gl.shaderSource(_fragmentShader, _fragmentShaderSource);
+    _gl.compileShader(_fragmentShader);
+
+    if (!_gl.getShaderParameter(
+        _fragmentShader, webgl.RenderingContext.COMPILE_STATUS)) {
+      print(_gl.getShaderInfoLog(_fragmentShader));
+    }
+
+    _program = _gl.createProgram();
+    _gl.attachShader(_program, _vertexShader);
+    _gl.attachShader(_program, _fragmentShader);
+    _gl.linkProgram(_program);
+    _gl.useProgram(_program);
+
+    if (!_gl.getProgramParameter(
+        _program, webgl.RenderingContext.LINK_STATUS)) {
+      print(_gl.getProgramInfoLog(_program));
+    }
+  }
+  
+  Map<String,webgl.UniformLocation> get uniforms => _uniforms;
+  webgl.Program get program => _program;
+  
+  
+  webgl.Buffer _vertexBuffer;
+  Map<String, Map> _attributes;
+  Map<String, webgl.UniformLocation> _uniforms;
+  
+  void createUniforms(List<String> uniformNames) {
+    _gl.useProgram(_program);
+
+    _uniforms = new Map<String,webgl.UniformLocation>();
+    for(String uniformName in uniformNames) {
+    _uniforms[uniformName] =
+        _gl.getUniformLocation(_program, uniformName);
+    }
+  }
+
+  void createVertexBuffer(Map<String, Map> attributes) {
+    _gl.useProgram(_program);
+    
+    _vertexBuffer = _gl.createBuffer();
+    _attributes = new Map<String, Map>();
+    for (String attributeName in attributes.keys) {
+      int index = _gl.getAttribLocation(_program, attributeName);
+     _gl.enableVertexAttribArray(index);
+
+      Map attribute = new Map();
+      attribute["index"] = index;
+      attribute["size"] = attributes[attributeName]["size"];
+      attribute["offset"] = attributes[attributeName]["offset"];
+      _attributes[attributeName] = attribute;
+    }
+  }
+
+  set stride(int stride) => _stride = stride;
+  
+  void bindBuffer() {
+    _gl.useProgram(_program);
+
+    /* The background model is just an oversized screen-filling triangle. */
+    _gl.bindBuffer(webgl.RenderingContext.ARRAY_BUFFER, _vertexBuffer);
+    for (String attributeName in _attributes.keys) {
+      Map attribute = _attributes[attributeName];
+      _gl.vertexAttribPointer(attribute["index"], attribute["size"],
+          webgl.RenderingContext.FLOAT, false, _stride*4, attribute["offset"]);
+    }
+
+  }
+  
+  void loadData(List<double> data) {
+    _gl.useProgram(_program);
+
+    _gl.bufferDataTyped(webgl.RenderingContext.ARRAY_BUFFER,
+        new Float32List.fromList(data), webgl.RenderingContext.STATIC_DRAW);
+    _count = data.length ~/ _stride;
+  }
+  
+  void render() {
+    _gl.useProgram(_program);
+
+    _gl.drawArrays(webgl.RenderingContext.TRIANGLES, 0, _count);
+  }
+}
+
 class Renderer {
   static const String BACKGROUND_VERTEX_SHADER = """
     attribute vec2 vPosition;
@@ -291,16 +404,14 @@ class Renderer {
   int _viewportWidth;
   int _viewportHeight;
   bool _ready;
-  webgl.Program _backgroundShaderProgram;
   webgl.Program _modelShaderProgram;
 
   webgl.RenderingContext _gl;
   int _model_aVertexPosition;
   int _model_aVertexNormal;
-  int _background_aVertexPosition;
-  webgl.UniformLocation _background_uPerspectiveMatrix;
 
-  webgl.UniformLocation _background_uInverseModelviewMatrix;
+  
+  
   webgl.UniformLocation _model_uPerspectiveMatrix;
   webgl.UniformLocation _model_uModelviewMatrix;
   webgl.UniformLocation _model_uInverseModelviewMatrix;
@@ -311,12 +422,7 @@ class Renderer {
   webgl.Buffer _modelVertexBuffer;
   webgl.Buffer _modelIndexBuffer;
 
-  webgl.Buffer _backgroundVertexBuffer;
 
-  /**
-   * The number of vertices in the background screen polygon.
-   */
-  int _backgroundVertexCount;
   /**
    * The number of vertices in the model.
    */
@@ -631,61 +737,43 @@ class Renderer {
     }
   }
 
+  ShaderObject _backgroundShader;
+
   /**
    * Set and initialize the shaders.
    */
   void _initShaders() {
+    _backgroundShader = new ShaderObject(_gl);
 
-    /* Attach background shaders to the program and link it. */
-    webgl.Shader bgvs = _gl.createShader(webgl.RenderingContext.VERTEX_SHADER);
-    _gl.shaderSource(bgvs, BACKGROUND_VERTEX_SHADER);
-    _gl.compileShader(bgvs);
+    _backgroundShader.loadShaders(
+        BACKGROUND_VERTEX_SHADER, BACKGROUND_FRAGMENT_SHADER);
 
-    webgl.Shader bgfs =
-        _gl.createShader(webgl.RenderingContext.FRAGMENT_SHADER);
-    _gl.shaderSource(bgfs, BACKGROUND_FRAGMENT_SHADER);
-    _gl.compileShader(bgfs);
+    _backgroundShader.stride = 2;
+    _backgroundShader.createVertexBuffer({
+      "vPosition": {
+        "size": 2,
+        "offset": 0
+      }
+    });
 
-    _backgroundShaderProgram = _gl.createProgram();
-    _gl.attachShader(_backgroundShaderProgram, bgvs);
-    _gl.attachShader(_backgroundShaderProgram, bgfs);
-    _gl.linkProgram(_backgroundShaderProgram);
+    _backgroundShader.bindBuffer();
 
-    _gl.useProgram(_backgroundShaderProgram);
+    _backgroundShader.createUniforms(
+        ["uPMatrix","uIMVMatrix","uSampler"]
+    );
+    
 
-    /**
-     * Check if shaders were compiled properly. This is probably the most painful part
-     * since there's no way to "debug" shader compilation
-     */
-    if (!_gl.getShaderParameter(bgvs, webgl.RenderingContext.COMPILE_STATUS)) {
-      print(_gl.getShaderInfoLog(bgvs));
-    }
-
-    if (!_gl.getShaderParameter(bgfs, webgl.RenderingContext.COMPILE_STATUS)) {
-      print(_gl.getShaderInfoLog(bgfs));
-    }
-
-    if (!_gl.getProgramParameter(
-        _backgroundShaderProgram, webgl.RenderingContext.LINK_STATUS)) {
-      print(_gl.getProgramInfoLog(_backgroundShaderProgram));
-    }
-
-    _backgroundVertexBuffer = _gl.createBuffer();
-    _background_aVertexPosition =
-        _gl.getAttribLocation(_backgroundShaderProgram, "vPosition");
-    _gl.enableVertexAttribArray(_background_aVertexPosition);
-
-    // vertex shader compilation
+    /* vertex shader compilation */
     webgl.Shader vs = _gl.createShader(webgl.RenderingContext.VERTEX_SHADER);
     _gl.shaderSource(vs, MODEL_VERTEX_SHADER);
     _gl.compileShader(vs);
 
-    // fragment shader compilation
+    /* fragment shader compilation */
     webgl.Shader fs = _gl.createShader(webgl.RenderingContext.FRAGMENT_SHADER);
     _gl.shaderSource(fs, MODEL_FRAGMENT_SHADER);
     _gl.compileShader(fs);
 
-    // attach shaders to a WebGL program
+    /* attach shaders to a WebGL program */
     _modelShaderProgram = _gl.createProgram();
     _gl.attachShader(_modelShaderProgram, vs);
     _gl.attachShader(_modelShaderProgram, fs);
@@ -737,10 +825,8 @@ class Renderer {
     _uRefractiveIndex =
         _gl.getUniformLocation(_modelShaderProgram, "uRefractiveIndex");
 
-    _background_uPerspectiveMatrix =
-        _gl.getUniformLocation(_backgroundShaderProgram, "uPMatrix");
-    _background_uInverseModelviewMatrix =
-        _gl.getUniformLocation(_backgroundShaderProgram, "uIMVMatrix");
+
+    
   }
 
   void _loadModel(String filename) {
@@ -769,7 +855,7 @@ class Renderer {
     _gl.clear(webgl.RenderingContext.COLOR_BUFFER_BIT |
         webgl.RenderingContext.DEPTH_BUFFER_BIT);
 
-    // field of view is 90°, width-to-height ratio, hide things closer than 0.1 or further than 100
+    /* field of view is 90°, width-to-height ratio, hide things closer than 0.1 or further than 100 */
     _perspectiveMatrix = makePerspectiveMatrix(radians(90.0),
         _viewportWidth / _viewportHeight, NEAR_DISTANCE, FAR_DISTANCE);
 
@@ -791,13 +877,10 @@ class Renderer {
     /* Render the background. */
     _gl.disable(webgl.RenderingContext.DEPTH_TEST);
 
-    _gl.useProgram(_backgroundShaderProgram);
-    _gl.bindBuffer(
-        webgl.RenderingContext.ARRAY_BUFFER, _backgroundVertexBuffer);
-    _gl.vertexAttribPointer(_background_aVertexPosition, 2,
-        webgl.RenderingContext.FLOAT, false, 2 * 4, 0);
     _gl.activeTexture(webgl.TEXTURE0);
-    _gl.drawArrays(webgl.RenderingContext.TRIANGLES, 0, _backgroundVertexCount);
+
+    _backgroundShader.bindBuffer();
+    _backgroundShader.render();
 
     /* Render the model. */
     _gl.enable(webgl.RenderingContext.DEPTH_TEST);
@@ -825,7 +908,6 @@ class Renderer {
 
     Float32List inverseModelviewList = new Float32List(16);
 
-    //Matrix4 t = new Matrix4.copy(_perspectiveMatrix * _modelviewMatrix);
     Matrix4 t = new Matrix4.copy(_modelviewMatrix);
     t.invert();
     t.copyIntoArray(inverseModelviewList);
@@ -845,11 +927,11 @@ class Renderer {
         _model_uInverseModelviewMatrix, false, inverseModelviewList);
     _gl.uniformMatrix3fv(_model_uNormalMatrix, false, normalList);
 
-    _gl.useProgram(_backgroundShaderProgram);
+    _gl.useProgram(_backgroundShader.program);
     _gl.uniformMatrix4fv(
-        _background_uPerspectiveMatrix, false, perspectiveList);
+        _backgroundShader.uniforms["uPMatrix"], false, perspectiveList);
     _gl.uniformMatrix4fv(
-        _background_uInverseModelviewMatrix, false, inverseModelviewList);
+        _backgroundShader.uniforms["uIMVMatrix"], false, inverseModelviewList);
   }
   void _setupModel(List<List<List<double>>> vertexes, List<int> indexData) {
     List<double> buffer = new List<double>();
@@ -897,10 +979,9 @@ class Renderer {
     _gl.bufferDataTyped(webgl.RenderingContext.ELEMENT_ARRAY_BUFFER,
         new Int16List.fromList(indexData), webgl.RenderingContext.STATIC_DRAW);
 
-    _gl.useProgram(_backgroundShaderProgram);
 
     /* The background model is just an oversized screen-filling triangle. */
-    _backgroundVertexCount = 3;
+
     List<double> backgroundBuffer = [
       // Lower left.
       -1.0,
@@ -912,13 +993,8 @@ class Renderer {
       -1.0,
       3.0
     ];
-    _gl.bindBuffer(
-        webgl.RenderingContext.ARRAY_BUFFER, _backgroundVertexBuffer);
-    _gl.vertexAttribPointer(_background_aVertexPosition, 2,
-        webgl.RenderingContext.FLOAT, false, 2 * 4, 0);
-    _gl.bufferDataTyped(webgl.RenderingContext.ARRAY_BUFFER,
-        new Float32List.fromList(backgroundBuffer),
-        webgl.RenderingContext.STATIC_DRAW);
+    _backgroundShader.bindBuffer();
+    _backgroundShader.loadData(backgroundBuffer);
   }
   /**
    * Load the cubemap.
@@ -962,10 +1038,10 @@ class Renderer {
     _gl.texParameteri(
         webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
 
-    _gl.useProgram(_backgroundShaderProgram);
+    _gl.useProgram(_backgroundShader.program);
     _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
     _gl.uniform1i(
-        _gl.getUniformLocation(_backgroundShaderProgram, "uSampler"), 0);
+        _gl.getUniformLocation(_backgroundShader.program, "uSampler"), 0);
     _gl.texParameteri(
         webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
     _gl.texParameteri(
