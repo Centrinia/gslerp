@@ -231,7 +231,6 @@ class ShaderObject {
   }
 
   Map<String, webgl.UniformLocation> get uniforms => _uniforms;
-  webgl.Program get program => _program;
 
   webgl.Buffer _indexBuffer;
   webgl.Buffer _vertexBuffer;
@@ -300,6 +299,11 @@ class ShaderObject {
 
     _gl.drawElements(webgl.RenderingContext.TRIANGLES, _count,
         webgl.RenderingContext.UNSIGNED_SHORT, 0);
+  }
+
+  Object withProgram(Function f) {
+    _gl.useProgram(_program);
+    return f();
   }
 }
 
@@ -515,8 +519,10 @@ class Renderer {
   get diffuseLight => _diffuseLight;
   set diffuseLight(double val) {
     _diffuseLight = val;
-    _gl.useProgram(_modelShader.program);
-    _gl.uniform1f(_modelShader.uniforms["uDiffuseLight"], _diffuseLight);
+
+    _modelShader.withProgram(() {
+      _gl.uniform1f(_modelShader.uniforms["uDiffuseLight"], _diffuseLight);
+    });
   }
   set interpolationMethod(String val) => _interpolationMethod = val;
 
@@ -538,8 +544,9 @@ class Renderer {
   get reflectedLight => _reflectedLight;
   set reflectedLight(double val) {
     _reflectedLight = val;
-    _gl.useProgram(_modelShader.program);
-    _gl.uniform1f(_modelShader.uniforms["uReflectedLight"], _reflectedLight);
+    _modelShader.withProgram(() {
+      _gl.uniform1f(_modelShader.uniforms["uReflectedLight"], _reflectedLight);
+    });
   }
 
   /**
@@ -549,8 +556,10 @@ class Renderer {
   get refractiveIndex => _refractiveIndex;
   set refractiveIndex(double val) {
     _refractiveIndex = val;
-    _gl.useProgram(_modelShader.program);
-    _gl.uniform1f(_modelShader.uniforms["uRefractiveIndex"], _refractiveIndex);
+    _modelShader.withProgram(() {
+      _gl.uniform1f(
+          _modelShader.uniforms["uRefractiveIndex"], _refractiveIndex);
+    });
   }
   /**
    * The attenuation factor for light that passes through the model.
@@ -559,9 +568,10 @@ class Renderer {
   get transmittedLight => _transmittedLight;
   set transmittedLight(double val) {
     _transmittedLight = val;
-    _gl.useProgram(_modelShader.program);
-    _gl.uniform1f(
-        _modelShader.uniforms["uTransmittedLight"], _transmittedLight);
+    _modelShader.withProgram(() {
+      _gl.uniform1f(
+          _modelShader.uniforms["uTransmittedLight"], _transmittedLight);
+    });
   }
   /**
    * Append the current keyframe to the list.
@@ -818,7 +828,6 @@ class Renderer {
     _backgroundShader.render();
 
     /* Render the model. */
-
     _gl.enable(webgl.RenderingContext.DEPTH_TEST);
     _modelShader.bindBuffer();
     _modelShader.render();
@@ -833,7 +842,7 @@ class Renderer {
 
     Float32List modelviewList = new Float32List(16);
     _modelviewMatrix.copyIntoArray(modelviewList);
-
+    
     Float32List inverseModelviewList = new Float32List(16);
 
     Matrix4 t = new Matrix4.copy(_modelviewMatrix);
@@ -848,20 +857,23 @@ class Renderer {
     nMatrix *= pow(det, 1.0 / 3.0);
     nMatrix.copyIntoArray(normalList);
 
-    _gl.useProgram(_modelShader.program);
-    _gl.uniformMatrix4fv(
-        _modelShader.uniforms["uPMatrix"], false, perspectiveList);
-    _gl.uniformMatrix4fv(
-        _modelShader.uniforms["uMVMatrix"], false, modelviewList);
-    _gl.uniformMatrix4fv(
-        _modelShader.uniforms["uIMVMatrix"], false, inverseModelviewList);
-    _gl.uniformMatrix3fv(_modelShader.uniforms["uNMatrix"], false, normalList);
+    _modelShader.withProgram(() {
+      _gl.uniformMatrix4fv(
+          _modelShader.uniforms["uPMatrix"], false, perspectiveList);
+      _gl.uniformMatrix4fv(
+          _modelShader.uniforms["uMVMatrix"], false, modelviewList);
+      _gl.uniformMatrix4fv(
+          _modelShader.uniforms["uIMVMatrix"], false, inverseModelviewList);
+      _gl.uniformMatrix3fv(
+          _modelShader.uniforms["uNMatrix"], false, normalList);
+    });
 
-    _gl.useProgram(_backgroundShader.program);
-    _gl.uniformMatrix4fv(
-        _backgroundShader.uniforms["uPMatrix"], false, perspectiveList);
-    _gl.uniformMatrix4fv(
-        _backgroundShader.uniforms["uIMVMatrix"], false, inverseModelviewList);
+    _backgroundShader.withProgram(() {
+      _gl.uniformMatrix4fv(
+          _backgroundShader.uniforms["uPMatrix"], false, perspectiveList);
+      _gl.uniformMatrix4fv(_backgroundShader.uniforms["uIMVMatrix"], false,
+          inverseModelviewList);
+    });
   }
   void _setupModel(List<List<List<double>>> vertexes, List<int> indexData) {
     List<double> buffer = new List<double>();
@@ -952,23 +964,24 @@ class Renderer {
 
     _gl.activeTexture(webgl.TEXTURE0);
 
-    _gl.useProgram(_modelShader.program);
-    _texture = _gl.createTexture();
-    _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
-    _gl.uniform1i(_gl.getUniformLocation(_modelShader.program, "uSampler"), 0);
-    _gl.texParameteri(
-        webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
-    _gl.texParameteri(
-        webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+    _modelShader.withProgram(() {
+      _texture = _gl.createTexture();
+      _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
+      _gl.uniform1i(_modelShader.uniforms["uSampler"], 0);
+      _gl.texParameteri(
+          webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+      _gl.texParameteri(
+          webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+    });
 
-    _gl.useProgram(_backgroundShader.program);
-    _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
-    _gl.uniform1i(
-        _gl.getUniformLocation(_backgroundShader.program, "uSampler"), 0);
-    _gl.texParameteri(
-        webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
-    _gl.texParameteri(
-        webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+    _backgroundShader.withProgram(() {
+      _gl.bindTexture(webgl.TEXTURE_CUBE_MAP, _texture);
+      _gl.uniform1i(_backgroundShader.uniforms["uSampler"], 0);
+      _gl.texParameteri(
+          webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MAG_FILTER, webgl.LINEAR);
+      _gl.texParameteri(
+          webgl.TEXTURE_CUBE_MAP, webgl.TEXTURE_MIN_FILTER, webgl.LINEAR);
+    });
 
     int ready = 0;
     for (Map imageDescription in imageDescriptions) {

@@ -6,6 +6,14 @@ import 'dart:math';
 import 'package:vector_math/vector_math.dart';
 
 /**
+ * Add an integer multiple of m to x so that the result is in [-c, m-c)
+ */
+double recenteredMod(double x, double m, double c) {
+  double z = x + c;
+  z -= (z / m).floor() * m;
+  return z - c;
+}
+/**
  * Count the number of set bits in an int.
  */
 int bitCount(int a) {
@@ -22,7 +30,7 @@ class Multivector {
   static const VECTOR_DIMENSION = 3;
   static const DIMENSION = 1 << VECTOR_DIMENSION;
   List<double> _elements;
-  
+
   /**
    * Construct the zero multivector.
    */
@@ -32,7 +40,7 @@ class Multivector {
       _elements[i] = 0.0;
     }
   }
-  
+
   /** 
    * Construct a multivector from a list. The indexes are bit patterns of grades.
    */
@@ -47,6 +55,7 @@ class Multivector {
    */
   Multivector.copy(Multivector b) {
     _elements = new List<double>(DIMENSION);
+
     for (int i = 0; i < DIMENSION; i++) {
       _elements[i] = b._elements[i];
     }
@@ -122,7 +131,7 @@ class Multivector {
   double get scalar {
     return _elements[0];
   }
-  
+
   /**
    * The vector component.
    */
@@ -196,7 +205,7 @@ class Multivector {
    */
   operator -(Multivector b) {
     Multivector c = new Multivector.zero();
-    
+
     for (int i = 0; i < DIMENSION; i++) {
       c._elements[i] = _elements[i] - b._elements[i];
     }
@@ -209,10 +218,10 @@ class Multivector {
   Multivector scale(double b) {
     Multivector c = new Multivector.zero();
 
-    for(int i=0;i<DIMENSION;i++){
+    for (int i = 0; i < DIMENSION; i++) {
       c._elements[i] = _elements[i] * b;
     }
-    
+
     return c;
   }
 
@@ -251,8 +260,8 @@ class Multivector {
    * Take e to the power of a blade to produce a versor.
    */
   Multivector versorExp() {
-    double alphasq = min((this*this).scalar, 0.0);
-    
+    double alphasq = min((this * this).scalar, 0.0);
+
     double alpha = sqrt(-alphasq);
     if (alpha == 0.0) {
       return new Multivector.one();
@@ -277,14 +286,16 @@ class Multivector {
       }
       return c;
     }
-    double s = atan2(c2norm, _elements[0]);
+    /* Make sure that the angle is as small as possible. Adding by multiples of pi does not
+     * change the orientation of the vectors but do redundantly cover the space. This is an issue
+     * when interpolating versors.
+     */
+    double s = recenteredMod(atan2(c2norm, _elements[0]), PI, PI / 2);
 
-    s = s - (s/PI).floor() * PI;
-    s = [s-PI,s,s+PI].reduce((a,b) => a.abs() < b.abs() ? a : b);
-    
-    assert(s.abs() < (s+PI).abs() && s.abs() < (s-PI).abs());
-       
+    assert(s.abs() < (s + PI).abs() && s.abs() < (s - PI).abs());
+
     c = c.scale(s / c2norm);
+
     return c;
   }
 
@@ -314,7 +325,7 @@ class Multivector {
     out += out == "" ? "0" : "";
     return out;
   }
-  
+
   /**
    * Construct a matrix from a versor.
    */
@@ -328,8 +339,7 @@ class Multivector {
 
     Matrix4 out = new Matrix4.identity();
     out.setRotation(rot);
-    
+
     return out;
   }
-
 }
